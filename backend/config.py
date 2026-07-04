@@ -49,7 +49,7 @@ def load_config() -> AppConfig:
         database_path=Path(database_path_raw) if database_path_raw else None,
         model_endpoint_url=model_endpoint_url,
         model_name=_read_str("MODEL_NAME", "local-placeholder-model"),
-        model_timeout_seconds=_read_float("MODEL_TIMEOUT_SECONDS", 120.0),
+        model_timeout_seconds=_read_float("MODEL_TIMEOUT_SECONDS", 240.0),
         use_placeholder_chat=_read_bool("USE_PLACEHOLDER_CHAT", False),
         embedding_provider=_read_str("EMBEDDING_PROVIDER", "auto").strip().lower(),
         embedding_model_path=embedding_model_path,
