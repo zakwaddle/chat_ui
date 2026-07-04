@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -21,7 +20,13 @@ def estimate_tokens(content: str) -> int:
 
 
 def get_database_path() -> Path:
-    return Path(os.getenv("DATABASE_PATH", DEFAULT_DATABASE_PATH))
+    try:
+        from .config import load_config
+    except ImportError:
+        from config import load_config
+
+    config = load_config()
+    return config.database_path or DEFAULT_DATABASE_PATH
 
 
 @contextmanager
@@ -77,8 +82,62 @@ def init_db(database_path: Path | None = None) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_messages_conversation_created
                 ON messages (conversation_id, created_at, id);
+
+            CREATE TABLE IF NOT EXISTS episodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER,
+                title TEXT,
+                created_at TEXT NOT NULL,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS episode_summaries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                episode_id INTEGER NOT NULL,
+                summary TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                FOREIGN KEY (episode_id) REFERENCES episodes(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS semantic_memory (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_message_id INTEGER,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                FOREIGN KEY (source_message_id) REFERENCES messages(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS memory_index (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_type TEXT NOT NULL,
+                memory_id INTEGER NOT NULL,
+                embedding_id INTEGER,
+                created_at TEXT NOT NULL,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                FOREIGN KEY (embedding_id) REFERENCES embeddings(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS crystallization_seeds (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                label TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                metadata TEXT NOT NULL DEFAULT '{}'
+            );
             """
         )
+
+
+FUTURE_MEMORY_TABLES = (
+    "episodes",
+    "episode_summaries",
+    "semantic_memory",
+    "memory_index",
+    "crystallization_seeds",
+)
 
 
 def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
@@ -159,6 +218,74 @@ def create_message(conversation_id: int, role: str, content: str) -> dict[str, A
     return row_to_dict(row)
 
 
+def get_message(message_id: int) -> dict[str, Any] | None:
+    with connect() as connection:
+        row = connection.execute(
+            """
+            SELECT id, conversation_id, role, content, created_at, token_estimate, embedding_id
+            FROM messages
+            WHERE id = ?
+            """,
+            (message_id,),
+        ).fetchone()
+
+    return row_to_dict(row) if row else None
+
+
+def list_messages_before(message_id: int, limit: int) -> list[dict[str, Any]]:
+    message = get_message(message_id)
+    if message is None:
+        return []
+
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, conversation_id, role, content, created_at, token_estimate, embedding_id
+            FROM messages
+            WHERE conversation_id = ?
+              AND (created_at < ? OR (created_at = ? AND id < ?))
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (
+                message["conversation_id"],
+                message["created_at"],
+                message["created_at"],
+                message["id"],
+                limit,
+            ),
+        ).fetchall()
+
+    return [row_to_dict(row) for row in reversed(rows)]
+
+
+def list_messages_after(message_id: int, limit: int) -> list[dict[str, Any]]:
+    message = get_message(message_id)
+    if message is None:
+        return []
+
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, conversation_id, role, content, created_at, token_estimate, embedding_id
+            FROM messages
+            WHERE conversation_id = ?
+              AND (created_at > ? OR (created_at = ? AND id > ?))
+            ORDER BY created_at ASC, id ASC
+            LIMIT ?
+            """,
+            (
+                message["conversation_id"],
+                message["created_at"],
+                message["created_at"],
+                message["id"],
+                limit,
+            ),
+        ).fetchall()
+
+    return [row_to_dict(row) for row in rows]
+
+
 def list_messages(conversation_id: int) -> list[dict[str, Any]]:
     with connect() as connection:
         rows = connection.execute(
@@ -172,6 +299,22 @@ def list_messages(conversation_id: int) -> list[dict[str, Any]]:
         ).fetchall()
 
     return [row_to_dict(row) for row in rows]
+
+
+def list_recent_messages(conversation_id: int, limit: int) -> list[dict[str, Any]]:
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, conversation_id, role, content, created_at, token_estimate, embedding_id
+            FROM messages
+            WHERE conversation_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (conversation_id, limit),
+        ).fetchall()
+
+    return [row_to_dict(row) for row in reversed(rows)]
 
 
 def create_embedding(
@@ -201,3 +344,45 @@ def create_embedding(
         ).fetchone()
 
     return row_to_dict(row)
+
+
+def list_embeddings() -> list[dict[str, Any]]:
+    with connect() as connection:
+        rows = connection.execute(
+            "SELECT id, message_id, provider, model, vector, created_at FROM embeddings ORDER BY id ASC"
+        ).fetchall()
+
+    return [row_to_dict(row) for row in rows]
+
+
+def list_embedding_candidates(
+    conversation_id: int,
+    exclude_message_ids: set[int],
+) -> list[dict[str, Any]]:
+    parameters: list[Any] = [conversation_id]
+    exclusion_sql = ""
+
+    if exclude_message_ids:
+        placeholders = ",".join("?" for _ in exclude_message_ids)
+        exclusion_sql = f"AND messages.id NOT IN ({placeholders})"
+        parameters.extend(sorted(exclude_message_ids))
+
+    with connect() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT
+                messages.id AS message_id,
+                messages.role,
+                messages.content,
+                messages.created_at,
+                embeddings.vector
+            FROM messages
+            JOIN embeddings ON embeddings.id = messages.embedding_id
+            WHERE messages.conversation_id = ?
+            {exclusion_sql}
+            ORDER BY messages.created_at ASC, messages.id ASC
+            """,
+            parameters,
+        ).fetchall()
+
+    return [row_to_dict(row) for row in rows]
