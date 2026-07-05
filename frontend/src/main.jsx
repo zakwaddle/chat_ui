@@ -102,9 +102,159 @@ function splitThinking(content) {
   };
 }
 
+function parseInlineMarkdown(text) {
+  const nodes = [];
+  const pattern = /(\[[^\]]+\]\((https?:\/\/[^)\s]+)\)|`([^`]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*)/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index));
+    }
+
+    if (match[2]) {
+      nodes.push(
+        <a href={match[2]} key={nodes.length} rel="noreferrer" target="_blank">
+          {match[1].slice(1, match[1].indexOf("]"))}
+        </a>
+      );
+    } else if (match[3]) {
+      nodes.push(<code key={nodes.length}>{match[3]}</code>);
+    } else if (match[4]) {
+      nodes.push(<strong key={nodes.length}>{match[4]}</strong>);
+    } else if (match[5]) {
+      nodes.push(<em key={nodes.length}>{match[5]}</em>);
+    }
+
+    lastIndex = pattern.lastIndex;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes;
+}
+
+function MarkdownContent({ content }) {
+  const text = String(content || "");
+  const lines = text.split(/\r?\n/);
+  const blocks = [];
+  let index = 0;
+
+  function addParagraph(startIndex) {
+    const paragraphLines = [];
+
+    while (index < lines.length) {
+      const line = lines[index];
+      if (
+        !line.trim() ||
+        line.startsWith("```") ||
+        /^#{1,3}\s+/.test(line) ||
+        /^\s*[-*]\s+/.test(line) ||
+        /^\s*\d+\.\s+/.test(line) ||
+        /^\s*>\s?/.test(line)
+      ) {
+        break;
+      }
+
+      paragraphLines.push(line.trim());
+      index += 1;
+    }
+
+    blocks.push(<p key={`p-${startIndex}`}>{parseInlineMarkdown(paragraphLines.join(" "))}</p>);
+  }
+
+  while (index < lines.length) {
+    const line = lines[index];
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      index += 1;
+      continue;
+    }
+
+    if (trimmed.startsWith("```")) {
+      const startIndex = index;
+      const codeLines = [];
+      index += 1;
+      while (index < lines.length && !lines[index].trim().startsWith("```")) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+      index += index < lines.length ? 1 : 0;
+      blocks.push(
+        <pre className="markdown-code-block" key={`code-${startIndex}`}>
+          <code>{codeLines.join("\n")}</code>
+        </pre>
+      );
+      continue;
+    }
+
+    const heading = trimmed.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      const level = heading[1].length;
+      const Tag = `h${level + 2}`;
+      blocks.push(<Tag key={`h-${index}`}>{parseInlineMarkdown(heading[2])}</Tag>);
+      index += 1;
+      continue;
+    }
+
+    if (/^\s*[-*]\s+/.test(line)) {
+      const startIndex = index;
+      const items = [];
+      while (index < lines.length && /^\s*[-*]\s+/.test(lines[index])) {
+        items.push(lines[index].replace(/^\s*[-*]\s+/, ""));
+        index += 1;
+      }
+      blocks.push(
+        <ul key={`ul-${startIndex}`}>
+          {items.map((item, itemIndex) => (
+            <li key={itemIndex}>{parseInlineMarkdown(item)}</li>
+          ))}
+        </ul>
+      );
+      continue;
+    }
+
+    if (/^\s*\d+\.\s+/.test(line)) {
+      const startIndex = index;
+      const items = [];
+      while (index < lines.length && /^\s*\d+\.\s+/.test(lines[index])) {
+        items.push(lines[index].replace(/^\s*\d+\.\s+/, ""));
+        index += 1;
+      }
+      blocks.push(
+        <ol key={`ol-${startIndex}`}>
+          {items.map((item, itemIndex) => (
+            <li key={itemIndex}>{parseInlineMarkdown(item)}</li>
+          ))}
+        </ol>
+      );
+      continue;
+    }
+
+    if (/^\s*>\s?/.test(line)) {
+      const startIndex = index;
+      const quoteLines = [];
+      while (index < lines.length && /^\s*>\s?/.test(lines[index])) {
+        quoteLines.push(lines[index].replace(/^\s*>\s?/, ""));
+        index += 1;
+      }
+      blocks.push(<blockquote key={`quote-${startIndex}`}>{parseInlineMarkdown(quoteLines.join(" "))}</blockquote>);
+      continue;
+    }
+
+    addParagraph(index);
+  }
+
+  return <div className="message-markdown">{blocks}</div>;
+}
+
 function MessageContent({ message }) {
   if (message.role !== "assistant") {
-    return <p>{message.content}</p>;
+    return <MarkdownContent content={message.content} />;
   }
 
   const { thinking, answer } = splitThinking(message.content);
@@ -117,9 +267,55 @@ function MessageContent({ message }) {
           <pre>{thinking}</pre>
         </details>
       ) : null}
-      <p>{answer || message.content}</p>
+      <MarkdownContent content={answer || message.content} />
     </>
   );
+}
+
+function createClientId() {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+
+  return `client-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function readJsonStream(response, onEvent) {
+  if (!response.body) {
+    const text = await response.text();
+    text
+      .split("\n")
+      .filter((line) => line.trim())
+      .forEach((line) => onEvent(JSON.parse(line)));
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (!line.trim()) {
+        continue;
+      }
+
+      onEvent(JSON.parse(line));
+    }
+
+    if (done) {
+      break;
+    }
+  }
+
+  if (buffer.trim()) {
+    onEvent(JSON.parse(buffer));
+  }
 }
 
 function App() {
@@ -128,6 +324,8 @@ function App() {
   const [conversations, setConversations] = useState([]);
   const [conversationTitle, setConversationTitle] = useState("");
   const [draft, setDraft] = useState("");
+  const [temperature, setTemperature] = useState("0.7");
+  const [repeatPenalty, setRepeatPenalty] = useState("1.1");
   const [isSending, setIsSending] = useState(false);
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [error, setError] = useState("");
@@ -211,49 +409,106 @@ function App() {
     }
 
     const userMessage = {
-      id: crypto.randomUUID(),
+      id: createClientId(),
       role: "user",
       content
     };
+    const assistantMessageId = createClientId();
 
-    setMessages((current) => [...current, userMessage]);
+    setMessages((current) => [
+      ...current,
+      userMessage,
+      {
+        id: assistantMessageId,
+        role: "assistant",
+        content: "",
+        memoryDebug: null,
+        isStreaming: true
+      }
+    ]);
     setDraft("");
     setError("");
     setIsSending(true);
 
     try {
-      const response = await fetch("/api/chat", {
+      const response = await fetch("/api/chat/stream", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ message: content, conversation_id: conversationId })
+        body: JSON.stringify({
+          message: content,
+          conversation_id: conversationId,
+          generation: {
+            temperature,
+            repeat_penalty: repeatPenalty
+          }
+        })
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
+        const data = await response.json();
         throw new Error(data.error || "Backend request failed");
       }
 
-      setConversationId(data.conversation?.id || conversationId);
+      let latestData = null;
+      await readJsonStream(response, ({ event: eventName, data }) => {
+        if (eventName === "conversation") {
+          setConversationId(data.conversation?.id || conversationId);
+          return;
+        }
+
+        if (eventName === "user_message") {
+          setMessages((current) =>
+            current.map((message) => (message.id === userMessage.id ? data.user_message || message : message))
+          );
+          return;
+        }
+
+        if (eventName === "delta") {
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === assistantMessageId
+                ? {
+                    ...message,
+                    content: `${message.content || ""}${data.content || ""}`
+                  }
+                : message
+            )
+          );
+          return;
+        }
+
+        if (eventName === "assistant_message") {
+          latestData = data;
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === assistantMessageId
+                ? {
+                    ...data.assistant_message,
+                    memoryDebug: buildMemoryDebug(data),
+                    isStreaming: false
+                  }
+                : message
+            )
+          );
+          return;
+        }
+
+        if (eventName === "error") {
+          throw new Error(data.error || "Backend request failed");
+        }
+      });
+
+      if (latestData?.conversation?.id) {
+        setConversationId(latestData.conversation.id);
+      }
       await loadConversations();
-      setMessages((current) =>
-        current.map((message) =>
-          message.id === userMessage.id ? data.user_message || message : message
-        ).concat(
-          data.assistant_message
-            ? [
-                {
-                  ...data.assistant_message,
-                  memoryDebug: buildMemoryDebug(data)
-                }
-              ]
-            : []
-        )
-      );
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to send message");
+      setMessages((current) =>
+        current.filter((message) => message.id !== assistantMessageId || (message.content || "").trim())
+      );
     } finally {
       setIsSending(false);
     }
@@ -318,21 +573,38 @@ function App() {
             <article className={`message message-${message.role}`} key={message.id}>
               <div className="message-role">{message.role}</div>
               <MessageContent message={message} />
+              {message.isStreaming && !message.content ? <p className="streaming-placeholder">Thinking...</p> : null}
               {message.role === "assistant" ? <MemoryDebugPanel debug={message.memoryDebug} /> : null}
             </article>
           ))}
-          {isSending ? (
-            <article className="message message-assistant">
-              <div className="message-role">assistant</div>
-              <p>Thinking...</p>
-            </article>
-          ) : null}
         </div>
 
         {error ? <div className="error-banner">{error}</div> : null}
 
         <form className="composer" onSubmit={sendMessage}>
-          <label htmlFor="message">Message</label>
+          <div className="generation-controls" aria-label="Generation settings">
+            <label>
+              <span>Temperature</span>
+              <input
+                min="0"
+                step="0.05"
+                type="number"
+                value={temperature}
+                onChange={(event) => setTemperature(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Repeat penalty</span>
+              <input
+                min="0"
+                step="0.05"
+                type="number"
+                value={repeatPenalty}
+                onChange={(event) => setRepeatPenalty(event.target.value)}
+              />
+            </label>
+          </div>
+          <label className="message-label" htmlFor="message">Message</label>
           <textarea
             id="message"
             rows="3"

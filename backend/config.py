@@ -21,6 +21,8 @@ class AppConfig:
     model_endpoint_url: str
     model_name: str
     model_timeout_seconds: float
+    model_temperature: float | None
+    model_repeat_penalty: float | None
     use_placeholder_chat: bool
     embedding_provider: str
     embedding_model_path: Path
@@ -49,7 +51,9 @@ def load_config() -> AppConfig:
         database_path=Path(database_path_raw) if database_path_raw else None,
         model_endpoint_url=model_endpoint_url,
         model_name=_read_str("MODEL_NAME", "local-placeholder-model"),
-        model_timeout_seconds=_read_float("MODEL_TIMEOUT_SECONDS", 240.0),
+        model_timeout_seconds=_read_float("MODEL_TIMEOUT_SECONDS", 480.0),
+        model_temperature=_read_optional_float("MODEL_TEMPERATURE", minimum=0.0),
+        model_repeat_penalty=_read_optional_float("MODEL_REPEAT_PENALTY", minimum=0.0),
         use_placeholder_chat=_read_bool("USE_PLACEHOLDER_CHAT", False),
         embedding_provider=_read_str("EMBEDDING_PROVIDER", "auto").strip().lower(),
         embedding_model_path=embedding_model_path,
@@ -94,15 +98,20 @@ def _read_float(name: str, default: float) -> float:
         return default
 
 
-def _read_optional_float(name: str) -> float | None:
+def _read_optional_float(name: str, minimum: float | None = None) -> float | None:
     raw_value = os.getenv(name)
     if raw_value is None or raw_value.strip() == "":
         return None
 
     try:
-        return float(raw_value)
+        value = float(raw_value)
     except ValueError:
         return None
+
+    if minimum is not None:
+        return max(minimum, value)
+
+    return value
 
 
 def _read_bool(name: str, default: bool = False) -> bool:

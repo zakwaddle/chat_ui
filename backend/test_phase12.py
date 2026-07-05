@@ -10,6 +10,8 @@ class ConfigurationFileTest(unittest.TestCase):
         "MODEL_ENDPOINT_URL",
         "MODEL_NAME",
         "MODEL_TIMEOUT_SECONDS",
+        "MODEL_TEMPERATURE",
+        "MODEL_REPEAT_PENALTY",
         "USE_PLACEHOLDER_CHAT",
         "EMBEDDING_PROVIDER",
         "EMBEDDING_MODEL_PATH",
@@ -37,6 +39,8 @@ class ConfigurationFileTest(unittest.TestCase):
 
         self.assertEqual(config.model_endpoint_url, "http://localhost:8080/v1")
         self.assertEqual(config.model_name, "local-placeholder-model")
+        self.assertIsNone(config.model_temperature)
+        self.assertIsNone(config.model_repeat_penalty)
         self.assertEqual(config.embedding_provider, "auto")
         self.assertEqual(config.embedding_model_path, Path("/storage/gguf/nomic-embed-text-v2-moe.Q8_0.gguf"))
         self.assertEqual(config.rolling_message_count, 12)
@@ -51,6 +55,8 @@ class ConfigurationFileTest(unittest.TestCase):
 
         os.environ["MODEL_ENDPOINT_URL"] = "http://localhost:9999/v1"
         os.environ["MODEL_NAME"] = "chat-model"
+        os.environ["MODEL_TEMPERATURE"] = "0.4"
+        os.environ["MODEL_REPEAT_PENALTY"] = "1.15"
         os.environ["USE_PLACEHOLDER_CHAT"] = "true"
         os.environ["EMBEDDING_PROVIDER"] = "stub"
         os.environ["EMBEDDING_MODEL"] = "embed-model"
@@ -65,6 +71,8 @@ class ConfigurationFileTest(unittest.TestCase):
 
         self.assertEqual(config.model_endpoint_url, "http://localhost:9999/v1")
         self.assertEqual(config.model_name, "chat-model")
+        self.assertEqual(config.model_temperature, 0.4)
+        self.assertEqual(config.model_repeat_penalty, 1.15)
         self.assertTrue(config.use_placeholder_chat)
         self.assertEqual(config.embedding_provider, "stub")
         self.assertEqual(config.embedding_model, "embed-model")
@@ -84,6 +92,8 @@ class ConfigurationFileTest(unittest.TestCase):
         os.environ["DEFAULT_CONTEXT_AFTER"] = "-4"
         os.environ["MAX_TOOL_EXPANSION_PASSES"] = "-2"
         os.environ["EMBEDDING_CONTEXT_SIZE"] = "8"
+        os.environ["MODEL_TEMPERATURE"] = "-0.5"
+        os.environ["MODEL_REPEAT_PENALTY"] = "-1"
 
         config = load_config()
 
@@ -93,6 +103,8 @@ class ConfigurationFileTest(unittest.TestCase):
         self.assertEqual(config.default_context_after, 0)
         self.assertEqual(config.max_tool_expansion_passes, 0)
         self.assertEqual(config.embedding_context_size, 128)
+        self.assertEqual(config.model_temperature, 0.0)
+        self.assertEqual(config.model_repeat_penalty, 0.0)
 
 
 if __name__ == "__main__":

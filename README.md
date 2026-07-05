@@ -48,7 +48,8 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. The Vite dev server proxies `/api` to the Flask backend.
+Open `http://localhost:5173` on this machine, or `http://chunky.local:5173` from another
+device on the local network. The Vite dev server proxies `/api` to the Flask backend.
 
 ## Pointing At llama.cpp
 
@@ -66,6 +67,12 @@ Then start the backend with:
 
 ```bash
 MODEL_ENDPOINT_URL=http://localhost:8080/v1 MODEL_NAME=your-chat-model python3 backend/app.py
+```
+
+Optional generation defaults can be set on the backend:
+
+```bash
+MODEL_TEMPERATURE=0.7 MODEL_REPEAT_PENALTY=1.1 python3 backend/app.py
 ```
 
 For embeddings, the default `EMBEDDING_PROVIDER=auto` uses `llama-cpp-python` with
@@ -134,7 +141,8 @@ GET /api/tools/context-around-message/:message_id?before=3&after=3
 
 The chat loop also exposes this as an OpenAI-compatible tool. If the model calls it, the
 backend executes one expansion pass, sends the tool result back to the model, and saves the
-final assistant response.
+final assistant response. Both `/api/chat` and `/api/chat/stream` use this tool-capable
+path.
 
 Relevant settings:
 
@@ -157,6 +165,8 @@ variables.
 | `MODEL_ENDPOINT_URL` | `http://localhost:8080/v1` | Chat completions endpoint base |
 | `MODEL_NAME` | `local-placeholder-model` | Chat model name sent to server |
 | `MODEL_TIMEOUT_SECONDS` | `60` | Chat request timeout |
+| `MODEL_TEMPERATURE` | unset | Optional default temperature sent to chat completions |
+| `MODEL_REPEAT_PENALTY` | unset | Optional default repeat penalty sent to chat completions |
 | `USE_PLACEHOLDER_CHAT` | `false` | Return deterministic placeholder replies |
 | `EMBEDDING_PROVIDER` | `auto` | `auto`, `llama-cpp`, `openai-compatible`, or `stub` |
 | `EMBEDDING_MODEL_PATH` | `/storage/gguf/nomic-embed-text-v2-moe.Q8_0.gguf` | Local GGUF embedding model |
@@ -180,7 +190,22 @@ variables.
 - `GET /api/conversations/:id/messages`
 - `POST /api/conversations/:id/messages`
 - `POST /api/chat`
+- `POST /api/chat/stream`
 - `GET /api/tools/context-around-message/:message_id`
+
+`POST /api/chat` and `POST /api/chat/stream` accept optional per-request generation
+overrides:
+
+```json
+{
+  "message": "Hello",
+  "conversation_id": 1,
+  "generation": {
+    "temperature": 0.7,
+    "repeat_penalty": 1.1
+  }
+}
+```
 
 ## Known Limitations
 

@@ -21,6 +21,8 @@ variables:
 - `MODEL_ENDPOINT_URL`, default `http://localhost:8080/v1`
 - `MODEL_NAME`, default `local-placeholder-model`
 - `MODEL_TIMEOUT_SECONDS`, default `60`
+- `MODEL_TEMPERATURE`, optional default sent to chat completions
+- `MODEL_REPEAT_PENALTY`, optional default sent to chat completions
 - `ROLLING_MESSAGE_COUNT`, default `12`
 - `USE_PLACEHOLDER_CHAT`, default `false`. Set to `1` only when testing without a local model server.
 - `DATABASE_PATH`, default `backend/data/associative_chat.sqlite3`
@@ -45,9 +47,12 @@ variables:
 - `GET /api/conversations/:id/messages`
 - `POST /api/conversations/:id/messages` with `{ "role": "user", "content": "..." }`
 - `POST /api/chat` with `{ "message": "...", "conversation_id": 1 }`
+- `POST /api/chat/stream` with `{ "message": "...", "conversation_id": 1 }`
 - `GET /api/tools/context-around-message/:message_id?before=3&after=3`
 
 `conversation_id` is optional. If omitted, the backend creates a new conversation.
+Both chat routes also accept `generation.temperature` and `generation.repeat_penalty`
+overrides, which are forwarded to the model server when provided.
 
 `/api/chat` sends only the most recent `ROLLING_MESSAGE_COUNT` persisted messages to the
 model prompt as recent conversation. The response includes `context_window` metadata with
@@ -63,9 +68,10 @@ rolling context window, and returns `retrieved_memories` with `message_id`, `rol
 The model prompt is assembled as separate sections: runtime instructions, clearly labeled
 older retrieved memories, and the recent rolling conversation in chronological order.
 
-`/api/chat` exposes `get_context_around_message` as an OpenAI-compatible tool. If the
-model calls it, the backend executes one expansion pass, sends the tool result back to the
-model, saves the final assistant response, and returns `context_expansion` metadata.
+`/api/chat` and `/api/chat/stream` expose `get_context_around_message` as an
+OpenAI-compatible tool. If the model calls it, the backend executes one expansion pass,
+sends the tool result back to the model, saves the final assistant response, and returns
+`context_expansion` metadata.
 
 `GET /api/tools/context-around-message/:message_id` returns the target message plus nearby
 messages from the same conversation in chronological order.

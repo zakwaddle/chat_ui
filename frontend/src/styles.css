@@ -167,8 +167,7 @@ summary {
 }
 
 .chat-header h1,
-.chat-header p,
-.message p {
+.chat-header p {
   margin: 0;
 }
 
@@ -227,6 +226,71 @@ summary {
   font-weight: 800;
   letter-spacing: 0;
   text-transform: uppercase;
+}
+
+.message-markdown {
+  display: grid;
+  gap: 10px;
+}
+
+.message-markdown > * {
+  margin: 0;
+}
+
+.message-markdown h3,
+.message-markdown h4,
+.message-markdown h5 {
+  color: #202124;
+  font-size: 1rem;
+  line-height: 1.3;
+}
+
+.message-markdown ul,
+.message-markdown ol {
+  display: grid;
+  gap: 6px;
+  padding-left: 22px;
+}
+
+.message-markdown blockquote {
+  border-left: 3px solid #c5d1dd;
+  padding-left: 12px;
+  color: #4f5d6b;
+}
+
+.message-markdown code {
+  border: 1px solid #dbe1e7;
+  border-radius: 5px;
+  padding: 1px 5px;
+  background: #f5f7f9;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.9em;
+}
+
+.message-markdown a {
+  color: #235f9f;
+  font-weight: 700;
+}
+
+.markdown-code-block {
+  overflow: auto;
+  border: 1px solid #d7dee6;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f6f8fa;
+}
+
+.markdown-code-block code {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  white-space: pre;
+}
+
+.streaming-placeholder {
+  margin: 0;
+  color: #66717e;
 }
 
 .thinking-panel {
@@ -358,13 +422,37 @@ summary {
   background: #ffffff;
 }
 
-.composer label {
+.message-label {
   position: absolute;
   width: 1px;
   height: 1px;
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
+}
+
+.generation-controls {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.generation-controls label {
+  display: grid;
+  width: 150px;
+  gap: 4px;
+  color: #536171;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.generation-controls input {
+  min-height: 34px;
+  border: 1px solid #cfd5dc;
+  border-radius: 8px;
+  padding: 7px 9px;
+  color: #202124;
 }
 
 .composer textarea {
@@ -430,6 +518,10 @@ summary {
 
   .composer {
     grid-template-columns: 1fr;
+  }
+
+  .generation-controls label {
+    width: min(150px, calc(50% - 5px));
   }
 
   .memory-debug-stats {

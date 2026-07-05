@@ -25,6 +25,8 @@ class ToolCallingChatLoopTest(unittest.TestCase):
             "DEFAULT_CONTEXT_BEFORE",
             "DEFAULT_CONTEXT_AFTER",
             "MAX_TOOL_EXPANSION_PASSES",
+            "MODEL_TEMPERATURE",
+            "MODEL_REPEAT_PENALTY",
         ):
             os.environ.pop(key, None)
 
@@ -56,8 +58,8 @@ class ToolCallingChatLoopTest(unittest.TestCase):
 
         captured_calls: list[dict] = []
 
-        def fake_chat_message(_chat_client, messages, tools=None):
-            captured_calls.append({"messages": messages, "tools": tools})
+        def fake_chat_message(_chat_client, messages, tools=None, generation_params=None):
+            captured_calls.append({"messages": messages, "tools": tools, "generation_params": generation_params})
             if len(captured_calls) == 1:
                 return {
                     "role": "assistant",
@@ -98,6 +100,97 @@ class ToolCallingChatLoopTest(unittest.TestCase):
         self.assertEqual(response.json["context_expansion"]["tool_name"], "get_context_around_message")
         self.assertEqual(response.json["assistant_message"]["content"], "I expanded the memory and found the scene.")
         self.assertEqual(list_messages(conversation["id"])[-1]["content"], "I expanded the memory and found the scene.")
+
+    def test_chat_loop_sends_generation_params_to_model_payload(self) -> None:
+        from backend.app import create_app
+
+        app = create_app()
+        client = app.test_client()
+        captured_params = []
+
+        def fake_chat_message(_chat_client, _messages, tools=None, generation_params=None):
+            captured_params.append(generation_params)
+            return {"role": "assistant", "content": "parameterized response"}
+
+        with patch("backend.app.LocalChatClient._create_chat_message", fake_chat_message):
+            response = client.post(
+                "/api/chat",
+                json={
+                    "message": "use params",
+                    "generation": {
+                        "temperature": "0.35",
+                        "repeat_penalty": "1.2",
+                    },
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(captured_params[0].temperature, 0.35)
+        self.assertEqual(captured_params[0].repeat_penalty, 1.2)
+        self.assertEqual(response.json["generation"], {"temperature": 0.35, "repeat_penalty": 1.2})
+
+    def test_streaming_chat_loop_exposes_context_expansion_tool(self) -> None:
+        from backend.app import create_app
+        from backend.database import create_conversation, create_embedding, create_message
+        from backend.embeddings import StubEmbeddingProvider, serialize_vector
+
+        app = create_app()
+        client = app.test_client()
+        provider = StubEmbeddingProvider()
+        conversation = create_conversation("stream tool calling")
+        target = create_message(conversation["id"], "assistant", "stream target memory")
+        create_embedding(
+            target["id"],
+            "stub",
+            "deterministic-hash-v1",
+            serialize_vector(provider.embed(target["content"]).vector),
+        )
+        captured_calls: list[dict] = []
+
+        def fake_chat_message(_chat_client, messages, tools=None, generation_params=None):
+            captured_calls.append({"messages": messages, "tools": tools, "generation_params": generation_params})
+            if len(captured_calls) == 1:
+                return {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call_stream_context",
+                            "type": "function",
+                            "function": {
+                                "name": "get_context_around_message",
+                                "arguments": json.dumps({"message_id": target["id"]}),
+                            },
+                        }
+                    ],
+                }
+
+            return {"role": "assistant", "content": "stream expanded response"}
+
+        with patch("backend.app.LocalChatClient._create_chat_message", fake_chat_message):
+            response = client.post(
+                "/api/chat/stream",
+                json={
+                    "conversation_id": conversation["id"],
+                    "message": "stream with tools",
+                    "generation": {
+                        "temperature": 0.25,
+                        "repeat_penalty": 1.05,
+                    },
+                },
+                buffered=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        events = [json.loads(line) for line in response.data.decode("utf-8").splitlines() if line]
+        assistant_event = next(event for event in events if event["event"] == "assistant_message")
+
+        self.assertEqual(len(captured_calls), 2)
+        self.assertIsNotNone(captured_calls[0]["tools"])
+        self.assertEqual(captured_calls[0]["generation_params"].temperature, 0.25)
+        self.assertEqual(captured_calls[0]["generation_params"].repeat_penalty, 1.05)
+        self.assertTrue(assistant_event["data"]["context_expansion"]["used"])
+        self.assertEqual(assistant_event["data"]["assistant_message"]["content"], "stream expanded response")
 
     def test_chat_loop_skips_tool_expansion_when_disabled(self) -> None:
         os.environ["MAX_TOOL_EXPANSION_PASSES"] = "0"
