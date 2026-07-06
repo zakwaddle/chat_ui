@@ -17,9 +17,8 @@ try:
     from .embeddings import serialize_vector
     from .prompt import assemble_prompt
     from .retrieval import retrieve_relevant_memories
-    from .tools import CONTEXT_TOOL_DEFINITION
-    from .tools import CONTEXT_TOOL_NAME
-    from .tools import execute_context_tool
+    from .tools import ToolRegistry
+    from .tools import build_default_tool_registry
 except ImportError:
     from database import create_conversation
     from database import create_embedding
@@ -31,9 +30,8 @@ except ImportError:
     from embeddings import serialize_vector
     from prompt import assemble_prompt
     from retrieval import retrieve_relevant_memories
-    from tools import CONTEXT_TOOL_DEFINITION
-    from tools import CONTEXT_TOOL_NAME
-    from tools import execute_context_tool
+    from tools import ToolRegistry
+    from tools import build_default_tool_registry
 
 
 CHAT_PIPELINE_STAGES = (
@@ -122,9 +120,7 @@ class LocalChatClient:
     def complete_with_tool_expansion(
         self,
         messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        default_context_before: int,
-        default_context_after: int,
+        tool_registry: ToolRegistry,
         max_expansion_passes: int,
         generation_params: GenerationParams | None = None,
     ) -> tuple[str, dict[str, Any]]:
@@ -134,12 +130,15 @@ class LocalChatClient:
 
             return self.complete(messages, generation_params=generation_params), {"used": False}
 
-        first_message = self._create_chat_message(messages, tools=tools, generation_params=generation_params)
+        first_message = self._create_chat_message(
+            messages,
+            tools=tool_registry.definitions(),
+            generation_params=generation_params,
+        )
         followup_messages, context_expansion = self._build_tool_followup_messages(
             messages,
             first_message,
-            default_context_before,
-            default_context_after,
+            tool_registry,
         )
         if followup_messages is None:
             return self._extract_content(first_message), {"used": False}
@@ -150,9 +149,7 @@ class LocalChatClient:
     def stream_with_tool_expansion(
         self,
         messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]],
-        default_context_before: int,
-        default_context_after: int,
+        tool_registry: ToolRegistry,
         max_expansion_passes: int,
         generation_params: GenerationParams | None = None,
     ) -> Iterator[dict[str, Any]]:
@@ -169,7 +166,7 @@ class LocalChatClient:
         first_message: dict[str, Any] | None = None
         for event in self._create_chat_message_stream_events(
             messages,
-            tools=tools,
+            tools=tool_registry.definitions(),
             generation_params=generation_params,
         ):
             if event["type"] == "delta":
@@ -184,8 +181,7 @@ class LocalChatClient:
         followup_messages, context_expansion = self._build_tool_followup_messages(
             messages,
             first_message,
-            default_context_before,
-            default_context_after,
+            tool_registry,
         )
         if followup_messages is None:
             yield {"type": "done", "content": content, "context_expansion": {"used": False}}
@@ -207,25 +203,14 @@ class LocalChatClient:
         self,
         messages: list[dict[str, Any]],
         first_message: dict[str, Any],
-        default_context_before: int,
-        default_context_after: int,
+        tool_registry: ToolRegistry,
     ) -> tuple[list[dict[str, Any]] | None, dict[str, Any]]:
         tool_calls = first_message.get("tool_calls") or []
         if not tool_calls:
             return None, {"used": False}
 
         tool_call = tool_calls[0]
-        function = tool_call.get("function") or {}
-        if function.get("name") != CONTEXT_TOOL_NAME:
-            return None, {"used": False, "error": "unsupported tool call"}
-
-        try:
-            arguments = json.loads(function.get("arguments") or "{}")
-            tool_result = execute_context_tool(arguments, default_context_before, default_context_after)
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
-            tool_result = {"error": f"invalid tool arguments: {error}"}
-
-        tool_call_id = tool_call.get("id") or "context-expansion"
+        execution = tool_registry.execute_tool_call(tool_call)
         followup_messages = [
             *messages,
             {
@@ -235,18 +220,13 @@ class LocalChatClient:
             },
             {
                 "role": "tool",
-                "tool_call_id": tool_call_id,
-                "name": CONTEXT_TOOL_NAME,
-                "content": json.dumps(tool_result),
+                "tool_call_id": execution.tool_call_id,
+                "name": execution.result.tool_name,
+                "content": execution.result.model_content(),
             },
         ]
 
-        return followup_messages, {
-            "used": "error" not in tool_result,
-            "tool_name": CONTEXT_TOOL_NAME,
-            "tool_call_id": tool_call_id,
-            "result": tool_result,
-        }
+        return followup_messages, execution.result.expansion_payload(execution.tool_call_id)
 
     def _create_chat_message(
         self,
@@ -386,6 +366,10 @@ class ChatOrchestrator:
         self.chat_client = chat_client
         self.embedding_provider = embedding_provider
         self.config = config
+        self.tool_registry = build_default_tool_registry(
+            default_context_before=config.default_context_before,
+            default_context_after=config.default_context_after,
+        )
 
     def complete_turn(self, payload: dict[str, Any]) -> dict[str, Any]:
         turn = self.prepare_turn(payload)
@@ -544,9 +528,7 @@ class ChatOrchestrator:
     def _complete_model_response(self, turn: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         return self.chat_client.complete_with_tool_expansion(
             messages=turn["model_messages"],
-            tools=[CONTEXT_TOOL_DEFINITION],
-            default_context_before=self.config.default_context_before,
-            default_context_after=self.config.default_context_after,
+            tool_registry=self.tool_registry,
             max_expansion_passes=self.config.max_tool_expansion_passes,
             generation_params=turn["generation_params"],
         )
@@ -554,9 +536,7 @@ class ChatOrchestrator:
     def _stream_model_response(self, turn: dict[str, Any]) -> Iterator[dict[str, Any]]:
         yield from self.chat_client.stream_with_tool_expansion(
             messages=turn["model_messages"],
-            tools=[CONTEXT_TOOL_DEFINITION],
-            default_context_before=self.config.default_context_before,
-            default_context_after=self.config.default_context_after,
+            tool_registry=self.tool_registry,
             max_expansion_passes=self.config.max_tool_expansion_passes,
             generation_params=turn["generation_params"],
         )
