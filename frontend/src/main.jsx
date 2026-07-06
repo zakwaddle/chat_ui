@@ -105,6 +105,148 @@ function MemoryDebugPanel({ debug }) {
   );
 }
 
+function SQLiteExplorerView({
+  schema,
+  selectedTable,
+  tableDescription,
+  preview,
+  previewLimit,
+  isLoading,
+  onOpenDatabase,
+  onSelectTable,
+  onPreviewLimitChange
+}) {
+  if (!schema) {
+    return (
+      <section className="sqlite-explorer sqlite-empty-state">
+        <h2>SQLite Explorer</h2>
+        <p>Select a database from the sidebar or enter a local SQLite path.</p>
+        <button type="button" onClick={onOpenDatabase} disabled={isLoading}>
+          Open Database
+        </button>
+      </section>
+    );
+  }
+
+  const tables = schema.tables || [];
+  const columns = tableDescription?.columns || [];
+  const previewColumns = preview?.columns || columns.map((column) => column.name);
+  const previewRows = preview?.rows || [];
+
+  return (
+    <section className="sqlite-explorer" aria-label="SQLite database explorer">
+      <div className="sqlite-explorer-header">
+        <div>
+          <h2>{schema.database?.name || "SQLite database"}</h2>
+          <p>{schema.database?.path}</p>
+        </div>
+        <div className="sqlite-explorer-stats">
+          <span>{tables.length} tables</span>
+          <span>{formatBytes(schema.database?.size_bytes || 0)}</span>
+        </div>
+      </div>
+
+      <div className="sqlite-explorer-layout">
+        <nav className="sqlite-explorer-tables" aria-label="Database tables">
+          {tables.length > 0 ? (
+            tables.map((table) => (
+              <button
+                className={`sqlite-table-item ${table.name === selectedTable ? "sqlite-table-item-active" : ""}`}
+                type="button"
+                key={`${table.type}-${table.name}`}
+                onClick={() => onSelectTable(table.name)}
+              >
+                <span>{table.name}</span>
+                <small>{table.type} · {formatRowCount(table.row_count)}</small>
+              </button>
+            ))
+          ) : (
+            <p>No tables found.</p>
+          )}
+        </nav>
+
+        <div className="sqlite-table-detail">
+          {selectedTable ? (
+            <>
+              <div className="sqlite-table-heading">
+                <div>
+                  <h3>{selectedTable}</h3>
+                  <p>{formatRowCount(tableDescription?.row_count)}</p>
+                </div>
+                <label>
+                  <span>Preview rows</span>
+                  <select value={previewLimit} onChange={(event) => onPreviewLimitChange(event.target.value)}>
+                    <option value="10">10</option>
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                  </select>
+                </label>
+              </div>
+
+              <section className="sqlite-columns" aria-label="Table columns">
+                <h4>Columns</h4>
+                <div className="sqlite-column-grid">
+                  {columns.map((column) => (
+                    <div className="sqlite-column" key={column.name}>
+                      <strong>{column.name}</strong>
+                      <span>{column.type || "untyped"}</span>
+                      <small>
+                        {column.primary_key ? "PK" : ""}
+                        {column.primary_key && column.not_null ? " · " : ""}
+                        {column.not_null ? "not null" : ""}
+                      </small>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="sqlite-preview" aria-label="Table row preview">
+                <h4>Preview</h4>
+                <div className="sqlite-table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        {previewColumns.map((column) => (
+                          <th key={column}>{column}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previewRows.length > 0 ? (
+                        previewRows.map((row, rowIndex) => (
+                          <tr key={rowIndex}>
+                            {previewColumns.map((column) => (
+                              <td key={column}>{formatCell(row[column])}</td>
+                            ))}
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={Math.max(1, previewColumns.length)}>No rows to preview.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              {tables.find((table) => table.name === selectedTable)?.sql ? (
+                <details className="sqlite-schema-sql">
+                  <summary>Schema SQL</summary>
+                  <pre>{tables.find((table) => table.name === selectedTable)?.sql}</pre>
+                </details>
+              ) : null}
+            </>
+          ) : (
+            <p className="sqlite-empty-table">Select a table to inspect it.</p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function splitThinking(content) {
   const text = String(content || "");
   const completeBlock = text.match(/<think[^>]*>([\s\S]*?)<\/think>/i);
@@ -358,12 +500,22 @@ function App() {
   const [llamaModels, setLlamaModels] = useState([]);
   const [llamaStatus, setLlamaStatus] = useState(null);
   const [llamaSettings, setLlamaSettings] = useState(() => readStoredJson(LLAMA_SETTINGS_STORAGE_KEY, {}));
+  const [activeView, setActiveView] = useState("chat");
+  const [sqliteDatabases, setSqliteDatabases] = useState([]);
+  const [sqlitePath, setSqlitePath] = useState("");
+  const [sqliteManualPath, setSqliteManualPath] = useState("");
+  const [sqliteSchema, setSqliteSchema] = useState(null);
+  const [sqliteSelectedTable, setSqliteSelectedTable] = useState("");
+  const [sqliteTableDescription, setSqliteTableDescription] = useState(null);
+  const [sqlitePreview, setSqlitePreview] = useState(null);
+  const [sqlitePreviewLimit, setSqlitePreviewLimit] = useState("25");
   const [isSending, setIsSending] = useState(false);
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [isTranscribingVoice, setIsTranscribingVoice] = useState(false);
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [isLoadingLlama, setIsLoadingLlama] = useState(false);
   const [isUpdatingLlama, setIsUpdatingLlama] = useState(false);
+  const [isLoadingSqlite, setIsLoadingSqlite] = useState(false);
   const [error, setError] = useState("");
   const [copiedMessageId, setCopiedMessageId] = useState(null);
   const messageListRef = useRef(null);
@@ -380,6 +532,7 @@ function App() {
   useEffect(() => {
     loadConversations();
     loadLlamaRuntime();
+    loadSqliteDatabases();
   }, []);
 
   useEffect(() => {
@@ -504,6 +657,116 @@ function App() {
       setError(requestError instanceof Error ? requestError.message : `Unable to ${action} llama server`);
     } finally {
       setIsUpdatingLlama(false);
+    }
+  }
+
+  async function loadSqliteDatabases() {
+    setIsLoadingSqlite(true);
+    try {
+      const response = await fetch("/api/sqlite/databases");
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Unable to load SQLite databases");
+      }
+
+      const databases = data.databases || [];
+      setSqliteDatabases(databases);
+      if (!sqlitePath && databases[0]?.path) {
+        setSqlitePath(databases[0].path);
+        setSqliteManualPath(databases[0].path);
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to load SQLite databases");
+    } finally {
+      setIsLoadingSqlite(false);
+    }
+  }
+
+  async function openSqliteDatabase(path = sqliteManualPath || sqlitePath) {
+    const nextPath = String(path || "").trim();
+    if (!nextPath) {
+      setError("Choose a SQLite database path first.");
+      return;
+    }
+
+    setIsLoadingSqlite(true);
+    setError("");
+
+    try {
+      const response = await fetch(`/api/sqlite/schema?path=${encodeURIComponent(nextPath)}`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Unable to inspect SQLite database");
+      }
+
+      const tables = data.tables || [];
+      setSqlitePath(data.database?.path || nextPath);
+      setSqliteManualPath(data.database?.path || nextPath);
+      setSqliteSchema(data);
+      setActiveView("explorer");
+
+      if (tables[0]?.name) {
+        await selectSqliteTable(tables[0].name, data.database?.path || nextPath);
+      } else {
+        setSqliteSelectedTable("");
+        setSqliteTableDescription(null);
+        setSqlitePreview(null);
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to inspect SQLite database");
+    } finally {
+      setIsLoadingSqlite(false);
+    }
+  }
+
+  async function selectSqliteTable(tableName, path = sqlitePath) {
+    await loadSqliteTable(tableName, path, sqlitePreviewLimit);
+  }
+
+  async function loadSqliteTable(tableName, path = sqlitePath, limit = sqlitePreviewLimit) {
+    const nextTable = String(tableName || "").trim();
+    const nextPath = String(path || "").trim();
+    if (!nextTable || !nextPath) {
+      return;
+    }
+
+    setIsLoadingSqlite(true);
+    setError("");
+    setSqliteSelectedTable(nextTable);
+
+    try {
+      const query = `path=${encodeURIComponent(nextPath)}`;
+      const [tableResponse, rowsResponse] = await Promise.all([
+        fetch(`/api/sqlite/tables/${encodeURIComponent(nextTable)}?${query}`),
+        fetch(`/api/sqlite/tables/${encodeURIComponent(nextTable)}/rows?${query}&limit=${encodeURIComponent(limit)}`)
+      ]);
+      const tableData = await tableResponse.json();
+      const rowsData = await rowsResponse.json();
+
+      if (!tableResponse.ok) {
+        throw new Error(tableData.error || "Unable to describe SQLite table");
+      }
+      if (!rowsResponse.ok) {
+        throw new Error(rowsData.error || "Unable to preview SQLite rows");
+      }
+
+      setSqliteTableDescription(tableData);
+      setSqlitePreview(rowsData);
+      setActiveView("explorer");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to inspect SQLite table");
+    } finally {
+      setIsLoadingSqlite(false);
+    }
+  }
+
+  async function refreshSqlitePreview(nextLimit = sqlitePreviewLimit) {
+    const cleanLimit = String(nextLimit || "25");
+    setSqlitePreviewLimit(cleanLimit);
+    if (sqliteSelectedTable) {
+      await loadSqliteTable(sqliteSelectedTable, sqlitePath, cleanLimit);
     }
   }
 
@@ -987,6 +1250,69 @@ function App() {
             </div>
           </section>
 
+          <section className="sqlite-panel" aria-label="SQLite explorer">
+            <div className="sqlite-panel-header">
+              <h2>SQLite</h2>
+              <button type="button" onClick={loadSqliteDatabases} disabled={isLoadingSqlite}>
+                Refresh
+              </button>
+            </div>
+
+            <label>
+              <span>Database</span>
+              <select
+                value={sqlitePath}
+                onChange={(event) => {
+                  setSqlitePath(event.target.value);
+                  setSqliteManualPath(event.target.value);
+                }}
+              >
+                <option value="">Select database</option>
+                {sqliteDatabases.map((database) => (
+                  <option value={database.path} key={database.path}>
+                    {database.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              <span>Path</span>
+              <input
+                value={sqliteManualPath}
+                onChange={(event) => setSqliteManualPath(event.target.value)}
+                placeholder="/path/to/database.sqlite3"
+              />
+            </label>
+
+            <div className="sqlite-actions">
+              <button type="button" onClick={() => openSqliteDatabase()} disabled={isLoadingSqlite}>
+                Open
+              </button>
+              <button type="button" onClick={() => setActiveView("chat")}>
+                Chat
+              </button>
+            </div>
+
+            {sqliteSchema?.tables?.length ? (
+              <div className="sqlite-table-list">
+                {sqliteSchema.tables.map((table) => (
+                  <button
+                    className={`sqlite-table-item ${
+                      table.name === sqliteSelectedTable ? "sqlite-table-item-active" : ""
+                    }`}
+                    type="button"
+                    key={`${table.type}-${table.name}`}
+                    onClick={() => selectSqliteTable(table.name)}
+                  >
+                    <span>{table.name}</span>
+                    <small>{formatRowCount(table.row_count)}</small>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </section>
+
           <div className="conversation-list">
             {conversations.length > 0 ? (
               conversations.map((conversation) => (
@@ -1012,43 +1338,109 @@ function App() {
         <header className="chat-header">
           <div>
             <h1>Associative Chat</h1>
-            <p>{activeConversation?.title || "Bounded memory prototype"}</p>
+            <p>{activeView === "explorer" ? sqliteSchema?.database?.name || "SQLite explorer" : activeConversation?.title || "Bounded memory prototype"}</p>
           </div>
           <div className="header-actions">
+            <button className="theme-toggle" type="button" onClick={() => setActiveView(activeView === "explorer" ? "chat" : "explorer")}>
+              {activeView === "explorer" ? "Chat" : "Explorer"}
+            </button>
             <button className="theme-toggle" type="button" onClick={toggleTheme}>
               {theme === "dark" ? "Light" : "Dark"}
             </button>
-            <span className="status-pill">Phase 11</span>
+            <span className="status-pill">Phase 2</span>
           </div>
         </header>
 
-        <div className="message-list" ref={messageListRef} onScroll={handleMessageListScroll} aria-live="polite">
-          {messages.map((message) => (
-            <article className={`message message-${message.role}`} key={message.id}>
-              <div className="message-meta">
-                <div className="message-role">{message.role}</div>
-                {message.role === "assistant" && message.content ? (
-                  <button className="message-copy" type="button" onClick={() => copyMessageContent(message)}>
-                    {copiedMessageId === message.id ? "Copied" : "Copy"}
-                  </button>
-                ) : null}
+        {activeView === "explorer" ? (
+          <SQLiteExplorerView
+            schema={sqliteSchema}
+            selectedTable={sqliteSelectedTable}
+            tableDescription={sqliteTableDescription}
+            preview={sqlitePreview}
+            previewLimit={sqlitePreviewLimit}
+            isLoading={isLoadingSqlite}
+            onOpenDatabase={() => openSqliteDatabase()}
+            onSelectTable={selectSqliteTable}
+            onPreviewLimitChange={refreshSqlitePreview}
+          />
+        ) : (
+          <>
+            <div className="message-list" ref={messageListRef} onScroll={handleMessageListScroll} aria-live="polite">
+              {messages.map((message) => (
+                <article className={`message message-${message.role}`} key={message.id}>
+                  <div className="message-meta">
+                    <div className="message-role">{message.role}</div>
+                    {message.role === "assistant" && message.content ? (
+                      <button className="message-copy" type="button" onClick={() => copyMessageContent(message)}>
+                        {copiedMessageId === message.id ? "Copied" : "Copy"}
+                      </button>
+                    ) : null}
+                  </div>
+                  <MessageContent message={message} />
+                  {message.isStreaming ? (
+                    <p className="streaming-placeholder">
+                      <span className="streaming-dots" aria-hidden="true">
+                        <span />
+                        <span />
+                        <span />
+                      </span>
+                      {message.content ? "Generating" : "Thinking"}
+                    </p>
+                  ) : null}
+                  {message.role === "assistant" ? <MemoryDebugPanel debug={message.memoryDebug} /> : null}
+                </article>
+              ))}
+              <div ref={messageEndRef} />
+            </div>
+
+            <form className="composer" onSubmit={sendMessage}>
+              <div className="generation-controls" aria-label="Generation settings">
+                <label>
+                  <span>Temperature</span>
+                  <input
+                    min="0"
+                    step="0.05"
+                    type="number"
+                    value={temperature}
+                    onChange={(event) => setTemperature(event.target.value)}
+                  />
+                </label>
+                <label>
+                  <span>Repeat penalty</span>
+                  <input
+                    min="0"
+                    step="0.05"
+                    type="number"
+                    value={repeatPenalty}
+                    onChange={(event) => setRepeatPenalty(event.target.value)}
+                  />
+                </label>
               </div>
-              <MessageContent message={message} />
-              {message.isStreaming ? (
-                <p className="streaming-placeholder">
-                  <span className="streaming-dots" aria-hidden="true">
-                    <span />
-                    <span />
-                    <span />
-                  </span>
-                  {message.content ? "Generating" : "Thinking"}
-                </p>
-              ) : null}
-              {message.role === "assistant" ? <MemoryDebugPanel debug={message.memoryDebug} /> : null}
-            </article>
-          ))}
-          <div ref={messageEndRef} />
-        </div>
+              <label className="message-label" htmlFor="message">Message</label>
+              <textarea
+                id="message"
+                rows="3"
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={handleMessageKeyDown}
+                placeholder="Type a message..."
+              />
+              <button
+                className={`voice-button ${isRecordingVoice ? "voice-button-recording" : ""}`}
+                type="button"
+                onClick={toggleVoiceRecording}
+                disabled={isSending || isTranscribingVoice}
+                aria-pressed={isRecordingVoice}
+                title={isRecordingVoice ? "Stop recording" : "Record voice input"}
+              >
+                {isRecordingVoice ? "Stop" : isTranscribingVoice ? "..." : "Mic"}
+              </button>
+              <button type="submit" disabled={!canSend}>
+                Send
+              </button>
+            </form>
+          </>
+        )}
 
         {error ? (
           <div className="error-banner">
@@ -1058,53 +1450,6 @@ function App() {
             </button>
           </div>
         ) : null}
-
-        <form className="composer" onSubmit={sendMessage}>
-          <div className="generation-controls" aria-label="Generation settings">
-            <label>
-              <span>Temperature</span>
-              <input
-                min="0"
-                step="0.05"
-                type="number"
-                value={temperature}
-                onChange={(event) => setTemperature(event.target.value)}
-              />
-            </label>
-            <label>
-              <span>Repeat penalty</span>
-              <input
-                min="0"
-                step="0.05"
-                type="number"
-                value={repeatPenalty}
-                onChange={(event) => setRepeatPenalty(event.target.value)}
-              />
-            </label>
-          </div>
-          <label className="message-label" htmlFor="message">Message</label>
-          <textarea
-            id="message"
-            rows="3"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={handleMessageKeyDown}
-            placeholder="Type a message..."
-          />
-          <button
-            className={`voice-button ${isRecordingVoice ? "voice-button-recording" : ""}`}
-            type="button"
-            onClick={toggleVoiceRecording}
-            disabled={isSending || isTranscribingVoice}
-            aria-pressed={isRecordingVoice}
-            title={isRecordingVoice ? "Stop recording" : "Record voice input"}
-          >
-            {isRecordingVoice ? "Stop" : isTranscribingVoice ? "..." : "Mic"}
-          </button>
-          <button type="submit" disabled={!canSend}>
-            Send
-          </button>
-        </form>
         </section>
       </section>
     </main>
@@ -1187,6 +1532,38 @@ function voiceFilenameForBlob(blob) {
   }
 
   return "voice.webm";
+}
+
+function formatRowCount(rowCount) {
+  if (rowCount === null || rowCount === undefined) {
+    return "unknown rows";
+  }
+  const count = Number(rowCount);
+  if (!Number.isFinite(count)) {
+    return "unknown rows";
+  }
+  return `${count.toLocaleString()} ${count === 1 ? "row" : "rows"}`;
+}
+
+function formatBytes(sizeBytes) {
+  const size = Number(sizeBytes);
+  if (!Number.isFinite(size) || size <= 0) {
+    return "0 B";
+  }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const exponent = Math.min(Math.floor(Math.log(size) / Math.log(1024)), units.length - 1);
+  const value = size / 1024 ** exponent;
+  return `${value.toFixed(value >= 10 || exponent === 0 ? 0 : 1)} ${units[exponent]}`;
+}
+
+function formatCell(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return String(value);
 }
 
 function buildLlamaLaunchPayload(settings) {

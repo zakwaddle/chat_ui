@@ -24,6 +24,11 @@ try:
     from .llama_manager import LlamaManagerConfig
     from .llama_manager import LlamaManagerError
     from .llama_manager import LlamaServerManager
+    from .sqlite_explorer import SQLiteExplorerError
+    from .sqlite_explorer import describe_table
+    from .sqlite_explorer import inspect_database
+    from .sqlite_explorer import list_available_databases
+    from .sqlite_explorer import preview_rows
     from .tools import get_context_around_message
     from .voice import WhisperConfig
     from .voice import WhisperCppTranscriber
@@ -47,6 +52,11 @@ except ImportError:
     from llama_manager import LlamaManagerConfig
     from llama_manager import LlamaManagerError
     from llama_manager import LlamaServerManager
+    from sqlite_explorer import SQLiteExplorerError
+    from sqlite_explorer import describe_table
+    from sqlite_explorer import inspect_database
+    from sqlite_explorer import list_available_databases
+    from sqlite_explorer import preview_rows
     from tools import get_context_around_message
     from voice import WhisperConfig
     from voice import WhisperCppTranscriber
@@ -177,6 +187,35 @@ def create_app() -> Flask:
     @app.get("/api/tools")
     def tools_index():
         return jsonify({"tools": chat_orchestrator.tool_registry.metadata()})
+
+    @app.get("/api/sqlite/databases")
+    def sqlite_databases():
+        return jsonify({"databases": list_available_databases(config.database_path)})
+
+    @app.get("/api/sqlite/schema")
+    def sqlite_schema():
+        database_path = request.args.get("path", "")
+        try:
+            return jsonify(inspect_database(database_path))
+        except SQLiteExplorerError as error:
+            return jsonify({"error": str(error)}), 400
+
+    @app.get("/api/sqlite/tables/<path:table_name>")
+    def sqlite_table(table_name: str):
+        database_path = request.args.get("path", "")
+        try:
+            return jsonify(describe_table(database_path, table_name))
+        except SQLiteExplorerError as error:
+            return jsonify({"error": str(error)}), 400
+
+    @app.get("/api/sqlite/tables/<path:table_name>/rows")
+    def sqlite_table_rows(table_name: str):
+        database_path = request.args.get("path", "")
+        limit = read_request_int("limit", 25)
+        try:
+            return jsonify(preview_rows(database_path, table_name, limit=limit))
+        except SQLiteExplorerError as error:
+            return jsonify({"error": str(error)}), 400
 
     @app.get("/api/llama/models")
     def llama_models():

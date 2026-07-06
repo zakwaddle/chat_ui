@@ -39,10 +39,18 @@ class ToolRegistryInfrastructureTest(unittest.TestCase):
         definitions = registry.definitions()
         metadata = registry.metadata()
 
-        self.assertEqual(len(definitions), 1)
-        self.assertEqual(definitions[0]["function"]["name"], "get_context_around_message")
-        self.assertEqual(metadata[0]["permission"], "conversation.read")
-        self.assertFalse(metadata[0]["destructive"])
+        definition_names = {definition["function"]["name"] for definition in definitions}
+        metadata_by_name = {tool["name"]: tool for tool in metadata}
+
+        self.assertIn("get_context_around_message", definition_names)
+        self.assertIn("list_tables", definition_names)
+        self.assertIn("describe_table", definition_names)
+        self.assertIn("sample_rows", definition_names)
+        self.assertIn("search_table", definition_names)
+        self.assertIn("run_read_only_query", definition_names)
+        self.assertEqual(metadata_by_name["get_context_around_message"]["permission"], "conversation.read")
+        self.assertEqual(metadata_by_name["run_read_only_query"]["permission"], "sqlite.read")
+        self.assertFalse(any(tool["destructive"] for tool in metadata))
 
     def test_registry_executes_context_tool_with_consistent_result_wrapper(self) -> None:
         from backend.database import create_conversation, create_message, init_db

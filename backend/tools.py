@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 from typing import Any
 
@@ -9,13 +10,32 @@ try:
     from .database import get_message
     from .database import list_messages_after
     from .database import list_messages_before
+    from .database import get_database_path
+    from .sqlite_explorer import SQLiteExplorerError
+    from .sqlite_explorer import describe_table
+    from .sqlite_explorer import list_tables
+    from .sqlite_explorer import preview_rows
+    from .sqlite_explorer import run_read_only_query
+    from .sqlite_explorer import search_table
 except ImportError:
     from database import get_message
     from database import list_messages_after
     from database import list_messages_before
+    from database import get_database_path
+    from sqlite_explorer import SQLiteExplorerError
+    from sqlite_explorer import describe_table
+    from sqlite_explorer import list_tables
+    from sqlite_explorer import preview_rows
+    from sqlite_explorer import run_read_only_query
+    from sqlite_explorer import search_table
 
 
 CONTEXT_TOOL_NAME = "get_context_around_message"
+SQLITE_LIST_TABLES_TOOL_NAME = "list_tables"
+SQLITE_DESCRIBE_TABLE_TOOL_NAME = "describe_table"
+SQLITE_SAMPLE_ROWS_TOOL_NAME = "sample_rows"
+SQLITE_SEARCH_TABLE_TOOL_NAME = "search_table"
+SQLITE_READ_ONLY_QUERY_TOOL_NAME = "run_read_only_query"
 
 
 @dataclass(frozen=True)
@@ -30,6 +50,7 @@ class ToolMetadata:
 class ToolExecutionContext:
     default_context_before: int
     default_context_after: int
+    sqlite_database_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -163,6 +184,138 @@ CONTEXT_TOOL_DEFINITION = {
     },
 }
 
+SQLITE_DATABASE_PATH_PROPERTY = {
+    "type": "string",
+    "description": "Optional absolute path to a SQLite database. Omit to inspect the active chat database.",
+}
+
+SQLITE_LIST_TABLES_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": SQLITE_LIST_TABLES_TOOL_NAME,
+        "description": "List tables and views in a SQLite database, including row counts for tables.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "database_path": SQLITE_DATABASE_PATH_PROPERTY,
+            },
+        },
+    },
+}
+
+SQLITE_DESCRIBE_TABLE_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": SQLITE_DESCRIBE_TABLE_TOOL_NAME,
+        "description": "Describe columns and row count for one SQLite table or view.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "database_path": SQLITE_DATABASE_PATH_PROPERTY,
+                "table_name": {
+                    "type": "string",
+                    "description": "Name of the table or view to describe.",
+                },
+            },
+            "required": ["table_name"],
+        },
+    },
+}
+
+SQLITE_SAMPLE_ROWS_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": SQLITE_SAMPLE_ROWS_TOOL_NAME,
+        "description": "Return a bounded preview of rows from a SQLite table or view.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "database_path": SQLITE_DATABASE_PATH_PROPERTY,
+                "table_name": {
+                    "type": "string",
+                    "description": "Name of the table or view to sample.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of rows to return. Values are clamped to a safe bound.",
+                    "default": 25,
+                    "minimum": 1,
+                    "maximum": 100,
+                },
+            },
+            "required": ["table_name"],
+        },
+    },
+}
+
+SQLITE_SEARCH_TABLE_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": SQLITE_SEARCH_TABLE_TOOL_NAME,
+        "description": "Search text-like columns in a SQLite table with a safe LIKE query.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "database_path": SQLITE_DATABASE_PATH_PROPERTY,
+                "table_name": {
+                    "type": "string",
+                    "description": "Name of the table or view to search.",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Text to search for.",
+                },
+                "columns": {
+                    "type": "array",
+                    "description": "Optional specific columns to search.",
+                    "items": {"type": "string"},
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of rows to return. Values are clamped to a safe bound.",
+                    "default": 25,
+                    "minimum": 1,
+                    "maximum": 100,
+                },
+            },
+            "required": ["table_name", "query"],
+        },
+    },
+}
+
+SQLITE_READ_ONLY_QUERY_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": SQLITE_READ_ONLY_QUERY_TOOL_NAME,
+        "description": "Run one read-only SELECT or WITH query against a SQLite database. Mutation, ATTACH, and PRAGMA statements are rejected.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "database_path": SQLITE_DATABASE_PATH_PROPERTY,
+                "sql": {
+                    "type": "string",
+                    "description": "A single SELECT or WITH query.",
+                },
+                "params": {
+                    "type": "array",
+                    "description": "Optional positional query parameters.",
+                    "items": {
+                        "type": ["string", "number", "boolean", "null"],
+                    },
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum rows fetched from the result. Values are clamped to a safe bound.",
+                    "default": 100,
+                    "minimum": 1,
+                    "maximum": 200,
+                },
+            },
+            "required": ["sql"],
+        },
+    },
+}
+
 
 def get_context_around_message(
     message_id: int,
@@ -225,11 +378,91 @@ def execute_context_tool_from_registry(
     )
 
 
-def build_default_tool_registry(default_context_before: int, default_context_after: int) -> ToolRegistry:
+def execute_sqlite_list_tables_tool(arguments: dict[str, Any], context: ToolExecutionContext) -> dict[str, Any]:
+    return _execute_sqlite_tool(lambda database_path: list_tables(database_path), arguments, context)
+
+
+def execute_sqlite_describe_table_tool(arguments: dict[str, Any], context: ToolExecutionContext) -> dict[str, Any]:
+    return _execute_sqlite_tool(
+        lambda database_path: describe_table(database_path, str(arguments["table_name"]).strip()),
+        arguments,
+        context,
+    )
+
+
+def execute_sqlite_sample_rows_tool(arguments: dict[str, Any], context: ToolExecutionContext) -> dict[str, Any]:
+    return _execute_sqlite_tool(
+        lambda database_path: preview_rows(
+            database_path,
+            str(arguments["table_name"]).strip(),
+            limit=_read_positive_int(arguments.get("limit"), 25),
+        ),
+        arguments,
+        context,
+    )
+
+
+def execute_sqlite_search_table_tool(arguments: dict[str, Any], context: ToolExecutionContext) -> dict[str, Any]:
+    raw_columns = arguments.get("columns")
+    columns = raw_columns if isinstance(raw_columns, list) else None
+    return _execute_sqlite_tool(
+        lambda database_path: search_table(
+            database_path,
+            str(arguments["table_name"]).strip(),
+            str(arguments["query"]).strip(),
+            columns=columns,
+            limit=_read_positive_int(arguments.get("limit"), 25),
+        ),
+        arguments,
+        context,
+    )
+
+
+def execute_sqlite_read_only_query_tool(arguments: dict[str, Any], context: ToolExecutionContext) -> dict[str, Any]:
+    raw_params = arguments.get("params")
+    params = raw_params if isinstance(raw_params, list) else []
+    return _execute_sqlite_tool(
+        lambda database_path: run_read_only_query(
+            database_path,
+            str(arguments["sql"]),
+            params=params,
+            limit=_read_positive_int(arguments.get("limit"), 100),
+        ),
+        arguments,
+        context,
+    )
+
+
+def _execute_sqlite_tool(
+    operation: Callable[[Path], dict[str, Any]],
+    arguments: dict[str, Any],
+    context: ToolExecutionContext,
+) -> dict[str, Any]:
+    try:
+        return operation(_read_database_path(arguments, context))
+    except SQLiteExplorerError as error:
+        return {"error": str(error)}
+
+
+def _read_database_path(arguments: dict[str, Any], context: ToolExecutionContext) -> Path:
+    raw_path = str(arguments.get("database_path") or "").strip()
+    if raw_path:
+        return Path(raw_path)
+    if context.sqlite_database_path is not None:
+        return context.sqlite_database_path
+    return get_database_path()
+
+
+def build_default_tool_registry(
+    default_context_before: int,
+    default_context_after: int,
+    sqlite_database_path: Path | None = None,
+) -> ToolRegistry:
     registry = ToolRegistry(
         ToolExecutionContext(
             default_context_before=default_context_before,
             default_context_after=default_context_after,
+            sqlite_database_path=sqlite_database_path,
         )
     )
     registry.register(
@@ -244,6 +477,66 @@ def build_default_tool_registry(default_context_before: int, default_context_aft
             executor=execute_context_tool_from_registry,
         )
     )
+    registry.register(
+        RegisteredTool(
+            metadata=ToolMetadata(
+                name=SQLITE_LIST_TABLES_TOOL_NAME,
+                description="List tables and views in a SQLite database.",
+                permission="sqlite.read",
+                destructive=False,
+            ),
+            definition=SQLITE_LIST_TABLES_TOOL_DEFINITION,
+            executor=execute_sqlite_list_tables_tool,
+        )
+    )
+    registry.register(
+        RegisteredTool(
+            metadata=ToolMetadata(
+                name=SQLITE_DESCRIBE_TABLE_TOOL_NAME,
+                description="Describe columns and row count for a SQLite table or view.",
+                permission="sqlite.read",
+                destructive=False,
+            ),
+            definition=SQLITE_DESCRIBE_TABLE_TOOL_DEFINITION,
+            executor=execute_sqlite_describe_table_tool,
+        )
+    )
+    registry.register(
+        RegisteredTool(
+            metadata=ToolMetadata(
+                name=SQLITE_SAMPLE_ROWS_TOOL_NAME,
+                description="Preview rows from a SQLite table or view.",
+                permission="sqlite.read",
+                destructive=False,
+            ),
+            definition=SQLITE_SAMPLE_ROWS_TOOL_DEFINITION,
+            executor=execute_sqlite_sample_rows_tool,
+        )
+    )
+    registry.register(
+        RegisteredTool(
+            metadata=ToolMetadata(
+                name=SQLITE_SEARCH_TABLE_TOOL_NAME,
+                description="Search text-like columns in a SQLite table.",
+                permission="sqlite.read",
+                destructive=False,
+            ),
+            definition=SQLITE_SEARCH_TABLE_TOOL_DEFINITION,
+            executor=execute_sqlite_search_table_tool,
+        )
+    )
+    registry.register(
+        RegisteredTool(
+            metadata=ToolMetadata(
+                name=SQLITE_READ_ONLY_QUERY_TOOL_NAME,
+                description="Run one safe read-only SELECT or WITH query against SQLite.",
+                permission="sqlite.read",
+                destructive=False,
+            ),
+            definition=SQLITE_READ_ONLY_QUERY_TOOL_DEFINITION,
+            executor=execute_sqlite_read_only_query_tool,
+        )
+    )
     return registry
 
 
@@ -253,5 +546,15 @@ def _read_nonnegative_int(value: Any, default: int) -> int:
 
     try:
         return max(0, int(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _read_positive_int(value: Any, default: int) -> int:
+    if value is None:
+        return default
+
+    try:
+        return max(1, int(value))
     except (TypeError, ValueError):
         return default

@@ -106,6 +106,39 @@ Deliverable:
 
 A complete read-only SQLite explorer.
 
+Codex Result:
+```
+• Completed Phase 2 from roadmap3.md.
+
+  Implemented:
+
+  - Read-only SQLite explorer backend in backend/sqlite_explorer.py.
+  - New API routes:
+      - GET /api/sqlite/databases
+      - GET /api/sqlite/schema?path=...
+      - GET /api/sqlite/tables/:table
+      - GET /api/sqlite/tables/:table/rows
+
+  - Safe read-only database access using SQLite mode=ro plus PRAGMA query_only = ON.
+  - UI explorer in the main app:
+      - Lists available databases.
+      - Allows entering any local SQLite path.
+      - Opens/inspects schema.
+      - Lists tables/views.
+      - Shows row counts, columns, schema SQL, and preview rows.
+      - Keeps chat available via the header/sidebar toggle.
+
+  - Regression tests in backend/test_phase2_sqlite_explorer.py.
+
+  Verified:
+
+  - python3 -m unittest backend.test_phase2_sqlite_explorer passes.
+  - python3 -m unittest discover backend passes: 48 tests.
+  - npm run build passes.
+  - Live backend checks passed for health, database listing, schema inspection, and row preview.
+
+```
+
 ---
 
 # Phase 3: SQLite Tool Registry
@@ -147,6 +180,36 @@ Only safe exploration is allowed.
 Deliverable:
 
 The model can inspect databases without risking corruption.
+
+Codex Result:
+```
+• Completed Phase 3 from roadmap3.md.
+
+  Implemented:
+
+  - Registered SQLite model tools:
+      - list_tables
+      - describe_table
+      - sample_rows
+      - search_table
+      - run_read_only_query
+
+  - Added read-only SQL execution guardrails:
+      - SQLite mode=ro connections
+      - PRAGMA query_only
+      - SQLite authorizer denial for write, schema, ATTACH/DETACH, and PRAGMA actions
+      - preflight rejection for INSERT, UPDATE, DELETE, DROP, ALTER, ATTACH, DETACH, CREATE, REPLACE, VACUUM, REINDEX, ANALYZE, and PRAGMA
+      - single-statement SELECT/WITH-only validation
+
+  - Added registry tests in backend/test_phase3_sqlite_tool_registry.py.
+
+  Verified:
+
+  - python3 -m unittest backend.test_phase3_sqlite_tool_registry passes.
+  - python3 -m unittest discover backend passes: 52 tests.
+  - npm run build passes.
+  - Live /api/tools check shows all SQLite tools with sqlite.read permission and destructive=false.
+```
 
 ---
 
