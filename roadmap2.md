@@ -277,6 +277,31 @@ Deliverable:
 
 Reliable local voice-to-text.
 
+Codex Result:
+```
+• Implemented Phase 6 Whisper.cpp voice input.
+
+  Added /api/voice/transcribe in backend/app.py, backed by backend/voice.py. The backend accepts uploaded microphone audio, converts browser formats such as webm to 16 kHz mono WAV through ffmpeg when needed, invokes local whisper.cpp at /home/zak/engines/whisper.cpp/build/bin/whisper-cli, and returns a cleaned transcript.
+
+  Added configurable Whisper settings in backend/config.py:
+
+  - WHISPER_EXECUTABLE_PATH
+  - WHISPER_MODEL_PATH
+  - WHISPER_FFMPEG_PATH
+  - WHISPER_TIMEOUT_SECONDS
+  - WHISPER_LANGUAGE
+
+  Added a microphone control to the composer in frontend/src/main.jsx. It records audio, sends it to Flask, inserts the returned transcript into the message draft, and does not auto-send.
+
+  Verification passed:
+
+  python3 -m unittest backend.test_phase6_voice
+  python3 -m unittest discover backend
+  npm run build
+
+  Result: 34 backend tests passing and frontend build passed.
+```
+
 ---
 
 ## Phase 7: Llama Server Management
@@ -304,6 +329,39 @@ This should remain intentionally lightweight.
 
 Its purpose is to make experimenting with local models easier.
 
+Codex Result:
+```
+• Implemented Phase 7 llama.cpp server management.
+
+  Added backend/llama_manager.py with a lightweight in-process manager for:
+
+  - discovering GGUF models under /storage/gguf
+  - exposing launch defaults
+  - building llama-server commands
+  - start, stop, and restart of a managed llama.cpp process
+  - status reporting for managed process state and endpoint reachability
+
+  Added Flask endpoints in backend/app.py:
+
+  - GET /api/llama/models
+  - GET /api/llama/status
+  - POST /api/llama/start
+  - POST /api/llama/stop
+  - POST /api/llama/restart
+
+  Added configurable launch defaults in backend/config.py, including LLAMA_SERVER_PATH, LLAMA_MODELS_DIR, LLAMA_DEFAULT_MODEL_PATH, LLAMA_HOST, LLAMA_PORT, LLAMA_CONTEXT_SIZE, LLAMA_BATCH_SIZE, LLAMA_GPU_LAYERS, and LLAMA_THREADS.
+
+  Added a compact llama.cpp control panel to the frontend sidebar in frontend/src/main.jsx and frontend/src/styles.css. It supports chat model selection, embedding model selection, GPU layers, context size, batch size, threads, port, temperature, status refresh, start, stop, and restart.
+
+  Verification passed:
+
+  python3 -m unittest backend.test_phase7_llama_manager
+  python3 -m unittest discover backend
+  npm run build
+
+  Result: 37 backend tests passing and frontend build passed.
+```
+
 ---
 
 ## Phase 8: Prepare Tool Infrastructure
@@ -329,6 +387,35 @@ No additional tools are required during this roadmap.
 Deliverable:
 
 Future tools can be added without modifying the chat runtime.
+
+Codex Result:
+```
+• Implemented Phase 8 tool infrastructure.
+
+  Added a centralized registry in backend/tools.py with:
+
+  - tool metadata
+  - OpenAI-compatible tool definitions
+  - execution context
+  - consistent execution result wrapper
+  - permission metadata
+
+  Migrated the existing get_context_around_message tool into the registry while preserving the existing model-facing tool result JSON.
+
+  Updated backend/chat.py so the chat runtime asks the registry for tool definitions and delegates tool-call execution through the registry instead of hardcoding context-tool logic. Future tools can now be registered in backend/tools.py without changing the model request, streaming, or persistence paths.
+
+  Added GET /api/tools in backend/app.py to expose registered tool metadata.
+
+  Added backend/test_phase8_tool_registry.py covering registry metadata, context tool execution, chat-runtime integration, and the tools metadata endpoint.
+
+  Verification passed:
+
+  python3 -m unittest backend.test_phase8_tool_registry
+  python3 -m unittest discover backend
+  npm run build
+
+  Result: 41 backend tests passing and frontend build passed.
+```
 
 ---
 
