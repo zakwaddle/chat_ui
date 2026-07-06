@@ -101,9 +101,9 @@ summary {
 
 .chat-panel {
   display: grid;
-  width: min(920px, 100%);
+  width: min(1120px, 100%);
   min-height: min(760px, calc(100vh - 64px));
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: 320px minmax(0, 1fr);
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -113,7 +113,7 @@ summary {
 
 .conversation-sidebar {
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto auto auto 1fr;
   min-width: 0;
   border-right: 1px solid var(--border);
   background: var(--surface-muted);
@@ -134,7 +134,8 @@ summary {
 }
 
 .conversation-sidebar-header button,
-.new-conversation button {
+.new-conversation button,
+.llama-panel button {
   min-height: 34px;
   border: 1px solid var(--border-strong);
   border-radius: 8px;
@@ -267,9 +268,82 @@ summary {
 
 .theme-toggle:hover,
 .conversation-sidebar-header button:hover,
-.new-conversation button:hover {
+.new-conversation button:hover,
+.llama-panel button:hover {
   border-color: var(--accent-border);
   color: var(--text-primary);
+}
+
+.llama-panel {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.llama-panel-header,
+.llama-status-row,
+.llama-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.llama-panel-header h2 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.llama-status-row {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.llama-state {
+  border: 1px solid var(--danger-border);
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
+.llama-state-online {
+  border-color: var(--success-border);
+  background: var(--success-bg);
+  color: var(--success-text);
+}
+
+.llama-panel label {
+  display: grid;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.llama-panel select,
+.llama-panel input {
+  width: 100%;
+  min-height: 34px;
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 7px 9px;
+  background: var(--surface-bg);
+  color: var(--text-primary);
+}
+
+.llama-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.llama-actions button {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .status-pill {
@@ -601,7 +675,7 @@ summary {
 
 .composer {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   gap: 12px;
   border-top: 1px solid var(--border);
   padding: 16px;
@@ -674,6 +748,26 @@ summary {
   background: var(--accent-hover);
 }
 
+.composer .voice-button {
+  min-width: 68px;
+  border: 1px solid var(--border-strong);
+  background: var(--button-bg);
+  color: var(--button-text);
+}
+
+.composer .voice-button:not(:disabled):hover {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--text-primary);
+}
+
+.composer .voice-button-recording,
+.composer .voice-button-recording:not(:disabled):hover {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger-text);
+}
+
 .composer button:disabled {
   background: var(--border-strong);
   color: var(--text-secondary);
@@ -695,9 +789,10 @@ summary {
   }
 
   .conversation-sidebar {
-    max-height: 260px;
+    max-height: 460px;
     border-right: 0;
     border-bottom: 1px solid var(--border);
+    overflow-y: auto;
   }
 
   .chat-header {
