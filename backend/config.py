@@ -19,6 +19,7 @@ DEFAULT_CHAT_MODEL_PATH = DEFAULT_LLAMA_MODELS_DIR / "Qwen3.6-35B-A3B-UD-Q4_K_M.
 DEFAULT_WHISPER_CPP_DIR = Path("/home/zak/engines/whisper.cpp")
 DEFAULT_WHISPER_EXECUTABLE_PATH = DEFAULT_WHISPER_CPP_DIR / "build/bin/whisper-cli"
 DEFAULT_WHISPER_MODEL_PATH = DEFAULT_WHISPER_CPP_DIR / "models/ggml-large-v3.bin"
+DEFAULT_KNOWLEDGE_SOURCES_PATH = Path.cwd() / "knowledge_sources.json"
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,7 @@ class AppConfig:
     whisper_ffmpeg_path: Path
     whisper_timeout_seconds: float
     whisper_language: str
+    knowledge_sources_path: Path
     knowledge_sources: tuple[dict[str, str], ...]
 
 
@@ -68,6 +70,7 @@ def load_config() -> AppConfig:
     llama_default_model_path = Path(_read_str("LLAMA_DEFAULT_MODEL_PATH", str(DEFAULT_CHAT_MODEL_PATH)))
 
     database_path_raw = os.getenv("DATABASE_PATH")
+    knowledge_sources_path = Path(_read_str("KNOWLEDGE_SOURCES_PATH", str(DEFAULT_KNOWLEDGE_SOURCES_PATH)))
 
     return AppConfig(
         port=_read_int("PORT", 5000, minimum=1),
@@ -106,7 +109,11 @@ def load_config() -> AppConfig:
         whisper_ffmpeg_path=Path(_read_str("WHISPER_FFMPEG_PATH", "/usr/bin/ffmpeg")),
         whisper_timeout_seconds=_read_float("WHISPER_TIMEOUT_SECONDS", 120.0),
         whisper_language=_read_str("WHISPER_LANGUAGE", "en"),
-        knowledge_sources=_read_knowledge_sources("KNOWLEDGE_SOURCES_JSON"),
+        knowledge_sources_path=knowledge_sources_path,
+        knowledge_sources=merge_knowledge_sources(
+            _read_knowledge_sources("KNOWLEDGE_SOURCES_JSON"),
+            load_knowledge_sources_file(knowledge_sources_path),
+        ),
     )
 
 
@@ -166,6 +173,10 @@ def _read_knowledge_sources(name: str) -> tuple[dict[str, str], ...]:
     if raw_value is None or raw_value.strip() == "":
         return ()
 
+    return parse_knowledge_sources_json(raw_value)
+
+
+def parse_knowledge_sources_json(raw_value: str) -> tuple[dict[str, str], ...]:
     try:
         parsed = json.loads(raw_value)
     except json.JSONDecodeError:
@@ -176,14 +187,14 @@ def _read_knowledge_sources(name: str) -> tuple[dict[str, str], ...]:
 
     sources = []
     for entry in parsed:
-        normalized = _normalize_knowledge_source(entry)
+        normalized = normalize_knowledge_source(entry)
         if normalized is not None:
             sources.append(normalized)
 
     return tuple(sources)
 
 
-def _normalize_knowledge_source(entry: Any) -> dict[str, str] | None:
+def normalize_knowledge_source(entry: Any) -> dict[str, str] | None:
     if not isinstance(entry, dict):
         return None
 
@@ -203,3 +214,32 @@ def _normalize_knowledge_source(entry: Any) -> dict[str, str] | None:
         "description": str(entry.get("description") or "External SQLite knowledge source").strip(),
         "permission": str(entry.get("permission") or "sqlite.read").strip() or "sqlite.read",
     }
+
+
+def load_knowledge_sources_file(path: Path) -> tuple[dict[str, str], ...]:
+    try:
+        raw_value = path.expanduser().read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ()
+    except OSError:
+        return ()
+
+    return parse_knowledge_sources_json(raw_value)
+
+
+def save_knowledge_sources_file(path: Path, sources: tuple[dict[str, str], ...] | list[dict[str, str]]) -> None:
+    normalized_sources = [source for source in (normalize_knowledge_source(source) for source in sources) if source is not None]
+    resolved_path = path.expanduser()
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    resolved_path.write_text(json.dumps(normalized_sources, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def merge_knowledge_sources(*source_groups: tuple[dict[str, str], ...] | list[dict[str, str]]) -> tuple[dict[str, str], ...]:
+    merged: dict[str, dict[str, str]] = {}
+    for sources in source_groups:
+        for source in sources:
+            normalized = normalize_knowledge_source(source)
+            if normalized is not None:
+                merged[normalized["id"]] = normalized
+
+    return tuple(merged.values())

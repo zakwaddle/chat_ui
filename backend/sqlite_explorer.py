@@ -152,6 +152,14 @@ def inspect_database(database_path: str | Path) -> dict[str, Any]:
     return {"database": database_metadata(path), "tables": tables}
 
 
+def validate_readable_sqlite_database(database_path: str | Path) -> Path:
+    path = normalize_database_path(database_path)
+    with read_only_connection(path) as connection:
+        connection.execute("SELECT name FROM sqlite_schema LIMIT 1").fetchone()
+
+    return path
+
+
 def describe_table(database_path: str | Path, table_name: str) -> dict[str, Any]:
     path = normalize_database_path(database_path)
     with read_only_connection(path) as connection:

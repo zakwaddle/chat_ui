@@ -27,6 +27,7 @@ class ConfigurationFileTest(unittest.TestCase):
         "MAX_TOOL_EXPANSION_PASSES",
         "SYSTEM_PROMPT",
         "KNOWLEDGE_SOURCES_JSON",
+        "KNOWLEDGE_SOURCES_PATH",
     )
 
     def tearDown(self) -> None:

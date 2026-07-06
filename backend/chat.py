@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from dataclasses import replace
+from pathlib import Path
 from typing import Any, Iterator
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -76,6 +78,7 @@ class ChatOrchestratorConfig:
     max_tool_expansion_passes: int
     default_generation_params: GenerationParams
     system_prompt: str
+    database_path: Path | None = None
     knowledge_sources: tuple[dict[str, str], ...] = ()
 
 
@@ -370,7 +373,17 @@ class ChatOrchestrator:
         self.tool_registry = build_default_tool_registry(
             default_context_before=config.default_context_before,
             default_context_after=config.default_context_after,
+            sqlite_database_path=config.database_path,
             knowledge_sources=config.knowledge_sources,
+        )
+
+    def update_knowledge_sources(self, knowledge_sources: tuple[dict[str, str], ...]) -> None:
+        self.config = replace(self.config, knowledge_sources=knowledge_sources)
+        self.tool_registry = build_default_tool_registry(
+            default_context_before=self.config.default_context_before,
+            default_context_after=self.config.default_context_after,
+            sqlite_database_path=self.config.database_path,
+            knowledge_sources=knowledge_sources,
         )
 
     def complete_turn(self, payload: dict[str, Any]) -> dict[str, Any]:

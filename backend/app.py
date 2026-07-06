@@ -20,6 +20,9 @@ try:
     from .chat import GenerationParams
     from .chat import LocalChatClient
     from .config import load_config
+    from .config import merge_knowledge_sources
+    from .config import normalize_knowledge_source
+    from .config import save_knowledge_sources_file
     from .embeddings import build_embedding_provider
     from .llama_manager import LlamaManagerConfig
     from .llama_manager import LlamaManagerError
@@ -29,6 +32,7 @@ try:
     from .sqlite_explorer import inspect_database
     from .sqlite_explorer import list_available_databases
     from .sqlite_explorer import preview_rows
+    from .sqlite_explorer import validate_readable_sqlite_database
     from .tools import get_context_around_message
     from .voice import WhisperConfig
     from .voice import WhisperCppTranscriber
@@ -48,6 +52,9 @@ except ImportError:
     from chat import GenerationParams
     from chat import LocalChatClient
     from config import load_config
+    from config import merge_knowledge_sources
+    from config import normalize_knowledge_source
+    from config import save_knowledge_sources_file
     from embeddings import build_embedding_provider
     from llama_manager import LlamaManagerConfig
     from llama_manager import LlamaManagerError
@@ -57,6 +64,7 @@ except ImportError:
     from sqlite_explorer import inspect_database
     from sqlite_explorer import list_available_databases
     from sqlite_explorer import preview_rows
+    from sqlite_explorer import validate_readable_sqlite_database
     from tools import get_context_around_message
     from voice import WhisperConfig
     from voice import WhisperCppTranscriber
@@ -95,6 +103,7 @@ def create_app() -> Flask:
                 repeat_penalty=config.model_repeat_penalty,
             ),
             system_prompt=config.system_prompt,
+            database_path=config.database_path,
             knowledge_sources=config.knowledge_sources,
         )
     )
@@ -125,6 +134,7 @@ def create_app() -> Flask:
             endpoint_url=config.model_endpoint_url,
         )
     )
+    current_knowledge_sources = config.knowledge_sources
 
     def encode_stream_event(event: str, data: dict[str, Any]) -> str:
         return json.dumps({"event": event, "data": data}) + "\n"
@@ -191,7 +201,62 @@ def create_app() -> Flask:
 
     @app.get("/api/sqlite/databases")
     def sqlite_databases():
-        return jsonify({"databases": list_available_databases(config.database_path, config.knowledge_sources)})
+        return jsonify({"databases": list_available_databases(config.database_path, current_knowledge_sources)})
+
+    @app.post("/api/knowledge-sources")
+    def knowledge_sources_create():
+        nonlocal current_knowledge_sources
+        payload = request.get_json(silent=True) or {}
+        raw_source = {
+            "id": str(payload.get("id") or "").strip(),
+            "name": str(payload.get("name") or "").strip(),
+            "path": str(payload.get("path") or "").strip(),
+            "description": str(payload.get("description") or "").strip(),
+            "permission": "sqlite.read",
+        }
+
+        if not raw_source["id"]:
+            return jsonify({"error": "source id is required"}), 400
+        if not raw_source["name"]:
+            return jsonify({"error": "source name is required"}), 400
+        if not raw_source["path"]:
+            return jsonify({"error": "database path is required"}), 400
+
+        normalized_source = normalize_knowledge_source(raw_source)
+        if normalized_source is None:
+            return jsonify({"error": "knowledge source is invalid"}), 400
+
+        if normalized_source["id"] == "chat":
+            return jsonify({"error": "source id is reserved: chat"}), 400
+
+        existing_sources = list_available_databases(config.database_path, current_knowledge_sources)
+        existing_ids = {source["id"] for source in existing_sources}
+        if normalized_source["id"] in existing_ids:
+            return jsonify({"error": f"knowledge source already exists: {normalized_source['id']}"}), 409
+
+        try:
+            validated_path = validate_readable_sqlite_database(normalized_source["path"])
+        except SQLiteExplorerError as error:
+            return jsonify({"error": str(error)}), 400
+
+        normalized_source = {
+            **normalized_source,
+            "path": str(validated_path),
+            "description": normalized_source["description"] or "External SQLite knowledge source",
+        }
+        next_sources = merge_knowledge_sources(current_knowledge_sources, (normalized_source,))
+
+        try:
+            save_knowledge_sources_file(config.knowledge_sources_path, next_sources)
+        except OSError as error:
+            return jsonify({"error": f"unable to save knowledge source: {error}"}), 500
+
+        current_knowledge_sources = next_sources
+        chat_orchestrator.update_knowledge_sources(next_sources)
+
+        sources = list_available_databases(config.database_path, current_knowledge_sources)
+        created_source = next(source for source in sources if source["id"] == normalized_source["id"])
+        return jsonify({"source": created_source, "databases": sources}), 201
 
     @app.get("/api/sqlite/schema")
     def sqlite_schema():

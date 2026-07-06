@@ -367,6 +367,37 @@ summary {
   cursor: pointer;
 }
 
+.sqlite-register {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+}
+
+.sqlite-register summary {
+  padding: 8px 10px;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.sqlite-register-body {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding: 10px;
+}
+
+.sqlite-register-body button {
+  min-height: 34px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--button-bg);
+  color: var(--button-text);
+  font-size: 0.82rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
 .sqlite-source-meta {
   display: flex;
   flex-wrap: wrap;

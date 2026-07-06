@@ -307,36 +307,45 @@ Codex Result:
 
 ---
 
-# Phase 6: Archive Integration
+# Phase 6: Manual Knowledge Source Registration
 
-The Archive application should become an importer rather than a chat application.
+Make external SQLite databases easy to add as knowledge sources.
 
-Responsibilities:
+Behavior:
 
-Archive application:
-
-- import ChatGPT exports
-- clean data
-- normalize data
-- generate embeddings
-- write archive database
-
-Chat application:
-
-- search archive
-- retrieve memories
-- answer questions
-- use archive tools
-
-Remove duplicated chat functionality.
-
-There should be one primary chat interface.
+- user provides a database path
+- user provides a source id, name, and optional description
+- backend validates that the database exists
+- backend validates that it can be opened read-only
+- source is saved as a configured knowledge source
+- source appears in the database explorer
+- source appears in `list_knowledge_sources`
+- SQLite tools can target it by `source_id`
 
 Deliverable:
 
-Archive becomes a knowledge producer.
+Any readable SQLite database can become a model-visible knowledge source by adding its path.
 
-Chat becomes the knowledge consumer.
+Codex Result:
+```
+• Completed Phase 6 from roadmap3.md.
+
+  Implemented:
+
+  - Added persistent knowledge source storage via KNOWLEDGE_SOURCES_PATH.
+  - Added POST /api/knowledge-sources for manual SQLite source registration.
+  - Validates source id, name, path existence, and read-only SQLite access before saving.
+  - Registered sources immediately appear in the SQLite explorer source list.
+  - The chat tool registry refreshes after registration, so list_knowledge_sources and SQLite source_id targeting work without restarting.
+  - Added a compact UI form in the SQLite sidebar for saving a database as a source.
+  - Added regression tests in backend/test_phase6_knowledge_source_registration.py.
+
+  Verified:
+
+  - python3 -m unittest backend.test_phase6_knowledge_source_registration passes.
+  - python3 -m unittest discover backend passes: 62 tests.
+  - npm run build passes.
+```
 
 ---
 

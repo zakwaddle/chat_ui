@@ -504,6 +504,9 @@ function App() {
   const [sqliteDatabases, setSqliteDatabases] = useState([]);
   const [sqlitePath, setSqlitePath] = useState("");
   const [sqliteManualPath, setSqliteManualPath] = useState("");
+  const [sqliteSourceId, setSqliteSourceId] = useState("");
+  const [sqliteSourceName, setSqliteSourceName] = useState("");
+  const [sqliteSourceDescription, setSqliteSourceDescription] = useState("");
   const [sqliteSchema, setSqliteSchema] = useState(null);
   const [sqliteSelectedTable, setSqliteSelectedTable] = useState("");
   const [sqliteTableDescription, setSqliteTableDescription] = useState(null);
@@ -516,6 +519,7 @@ function App() {
   const [isLoadingLlama, setIsLoadingLlama] = useState(false);
   const [isUpdatingLlama, setIsUpdatingLlama] = useState(false);
   const [isLoadingSqlite, setIsLoadingSqlite] = useState(false);
+  const [isRegisteringSqlite, setIsRegisteringSqlite] = useState(false);
   const [error, setError] = useState("");
   const [copiedMessageId, setCopiedMessageId] = useState(null);
   const messageListRef = useRef(null);
@@ -719,6 +723,52 @@ function App() {
       setError(requestError instanceof Error ? requestError.message : "Unable to inspect SQLite database");
     } finally {
       setIsLoadingSqlite(false);
+    }
+  }
+
+  async function registerKnowledgeSource() {
+    const path = String(sqliteManualPath || sqlitePath || "").trim();
+    const id = String(sqliteSourceId || "").trim();
+    const name = String(sqliteSourceName || "").trim();
+    const description = String(sqliteSourceDescription || "").trim();
+
+    if (!path || !id || !name) {
+      setError("Source id, name, and database path are required.");
+      return;
+    }
+
+    setIsRegisteringSqlite(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/knowledge-sources", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ id, name, path, description })
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Unable to register knowledge source");
+      }
+
+      const databases = data.databases || [];
+      const source = data.source;
+      setSqliteDatabases(databases);
+      if (source?.path) {
+        setSqlitePath(source.path);
+        setSqliteManualPath(source.path);
+        await openSqliteDatabase(source.path);
+      }
+      setSqliteSourceId("");
+      setSqliteSourceName("");
+      setSqliteSourceDescription("");
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to register knowledge source");
+    } finally {
+      setIsRegisteringSqlite(false);
     }
   }
 
@@ -1302,6 +1352,39 @@ function App() {
                 Chat
               </button>
             </div>
+
+            <details className="sqlite-register">
+              <summary>Register source</summary>
+              <div className="sqlite-register-body">
+                <label>
+                  <span>Source id</span>
+                  <input
+                    value={sqliteSourceId}
+                    onChange={(event) => setSqliteSourceId(event.target.value)}
+                    placeholder="archive"
+                  />
+                </label>
+                <label>
+                  <span>Name</span>
+                  <input
+                    value={sqliteSourceName}
+                    onChange={(event) => setSqliteSourceName(event.target.value)}
+                    placeholder="Archive"
+                  />
+                </label>
+                <label>
+                  <span>Description</span>
+                  <input
+                    value={sqliteSourceDescription}
+                    onChange={(event) => setSqliteSourceDescription(event.target.value)}
+                    placeholder="External SQLite knowledge source"
+                  />
+                </label>
+                <button type="button" onClick={registerKnowledgeSource} disabled={isRegisteringSqlite || isLoadingSqlite}>
+                  {isRegisteringSqlite ? "Saving" : "Save source"}
+                </button>
+              </div>
+            </details>
 
             {sqliteSchema?.tables?.length ? (
               <div className="sqlite-table-list">
