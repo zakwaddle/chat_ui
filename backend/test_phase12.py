@@ -26,6 +26,7 @@ class ConfigurationFileTest(unittest.TestCase):
         "DEFAULT_CONTEXT_AFTER",
         "MAX_TOOL_EXPANSION_PASSES",
         "SYSTEM_PROMPT",
+        "KNOWLEDGE_SOURCES_JSON",
     )
 
     def tearDown(self) -> None:
@@ -49,6 +50,7 @@ class ConfigurationFileTest(unittest.TestCase):
         self.assertEqual(config.default_context_before, 3)
         self.assertEqual(config.default_context_after, 3)
         self.assertEqual(config.max_tool_expansion_passes, 1)
+        self.assertEqual(config.knowledge_sources, ())
 
     def test_config_loads_environment_overrides(self) -> None:
         from backend.config import load_config
@@ -66,6 +68,10 @@ class ConfigurationFileTest(unittest.TestCase):
         os.environ["DEFAULT_CONTEXT_BEFORE"] = "1"
         os.environ["DEFAULT_CONTEXT_AFTER"] = "5"
         os.environ["MAX_TOOL_EXPANSION_PASSES"] = "0"
+        os.environ["KNOWLEDGE_SOURCES_JSON"] = (
+            '[{"id":"archive","path":"/tmp/archive.sqlite3",'
+            '"description":"Imported archive","permission":"sqlite.read"}]'
+        )
 
         config = load_config()
 
@@ -82,6 +88,9 @@ class ConfigurationFileTest(unittest.TestCase):
         self.assertEqual(config.default_context_before, 1)
         self.assertEqual(config.default_context_after, 5)
         self.assertEqual(config.max_tool_expansion_passes, 0)
+        self.assertEqual(config.knowledge_sources[0]["id"], "archive")
+        self.assertEqual(config.knowledge_sources[0]["path"], "/tmp/archive.sqlite3")
+        self.assertEqual(config.knowledge_sources[0]["description"], "Imported archive")
 
     def test_config_clamps_memory_counts(self) -> None:
         from backend.config import load_config

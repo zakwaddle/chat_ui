@@ -95,6 +95,7 @@ def create_app() -> Flask:
                 repeat_penalty=config.model_repeat_penalty,
             ),
             system_prompt=config.system_prompt,
+            knowledge_sources=config.knowledge_sources,
         )
     )
     voice_transcriber = WhisperCppTranscriber(
@@ -190,7 +191,7 @@ def create_app() -> Flask:
 
     @app.get("/api/sqlite/databases")
     def sqlite_databases():
-        return jsonify({"databases": list_available_databases(config.database_path)})
+        return jsonify({"databases": list_available_databases(config.database_path, config.knowledge_sources)})
 
     @app.get("/api/sqlite/schema")
     def sqlite_schema():

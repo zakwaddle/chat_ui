@@ -528,6 +528,7 @@ function App() {
 
   const canSend = useMemo(() => draft.trim().length > 0 && !isSending, [draft, isSending]);
   const activeConversation = conversations.find((conversation) => conversation.id === conversationId);
+  const selectedSqliteDatabase = sqliteDatabases.find((database) => database.path === sqlitePath);
 
   useEffect(() => {
     loadConversations();
@@ -1270,11 +1271,19 @@ function App() {
                 <option value="">Select database</option>
                 {sqliteDatabases.map((database) => (
                   <option value={database.path} key={database.path}>
-                    {database.name}
+                    {database.name} ({database.id || database.type || "source"})
                   </option>
                 ))}
               </select>
             </label>
+
+            {selectedSqliteDatabase ? (
+              <div className="sqlite-source-meta">
+                <span>{selectedSqliteDatabase.id}</span>
+                <span>{selectedSqliteDatabase.permission}</span>
+                <small>{selectedSqliteDatabase.description}</small>
+              </div>
+            ) : null}
 
             <label>
               <span>Path</span>

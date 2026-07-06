@@ -367,6 +367,31 @@ summary {
   cursor: pointer;
 }
 
+.sqlite-source-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sqlite-source-meta span {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 7px;
+  background: var(--surface-bg);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.sqlite-source-meta small {
+  flex-basis: 100%;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sqlite-table-list {
   display: grid;
   gap: 6px;

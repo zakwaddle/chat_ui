@@ -30,17 +30,39 @@ class SQLiteExplorerError(ValueError):
     pass
 
 
-def list_available_databases(config_database_path: Path | None = None) -> list[dict[str, Any]]:
+def list_available_databases(
+    config_database_path: Path | None = None,
+    configured_sources: tuple[dict[str, str], ...] | list[dict[str, str]] = (),
+) -> list[dict[str, Any]]:
     candidates: dict[Path, dict[str, Any]] = {}
+    used_ids: set[str] = set()
 
     active_path = (config_database_path or DEFAULT_DATABASE_PATH).expanduser().resolve()
-    candidates[active_path] = {
-        "name": active_path.name,
-        "path": str(active_path),
-        "description": "Active chat database",
-        "exists": active_path.exists(),
-        "size_bytes": active_path.stat().st_size if active_path.exists() else 0,
-    }
+    active_source = build_database_source(
+        source_id="chat",
+        name=active_path.name,
+        path=active_path,
+        description="Active chat database",
+        permission="sqlite.read",
+        source_type="chat",
+        used_ids=used_ids,
+    )
+    candidates[active_path] = active_source
+
+    for source in configured_sources:
+        source_path = Path(str(source.get("path") or "")).expanduser()
+        if not str(source_path):
+            continue
+        resolved_path = source_path.resolve()
+        candidates[resolved_path] = build_database_source(
+            source_id=str(source.get("id") or resolved_path.stem),
+            name=str(source.get("name") or resolved_path.name),
+            path=resolved_path,
+            description=str(source.get("description") or "External SQLite knowledge source"),
+            permission=str(source.get("permission") or "sqlite.read"),
+            source_type="external",
+            used_ids=used_ids,
+        )
 
     for directory in database_search_directories(active_path):
         if not directory.exists() or not directory.is_dir():
@@ -49,18 +71,77 @@ def list_available_databases(config_database_path: Path | None = None) -> list[d
             if path.suffix.lower() not in SQLITE_EXTENSIONS:
                 continue
             resolved_path = path.resolve()
-            candidates.setdefault(
-                resolved_path,
-                {
-                    "name": resolved_path.name,
-                    "path": str(resolved_path),
-                    "description": "SQLite database",
-                    "exists": resolved_path.exists(),
-                    "size_bytes": resolved_path.stat().st_size if resolved_path.exists() else 0,
-                },
-            )
+            if resolved_path not in candidates:
+                candidates[resolved_path] = build_database_source(
+                    source_id=resolved_path.stem,
+                    name=resolved_path.name,
+                    path=resolved_path,
+                    description="Discovered SQLite database",
+                    permission="sqlite.read",
+                    source_type="discovered",
+                    used_ids=used_ids,
+                )
 
-    return sorted(candidates.values(), key=lambda database: (not database["exists"], database["name"].lower()))
+    return sorted(candidates.values(), key=lambda database: (database["type"] != "chat", database["name"].lower()))
+
+
+def build_database_source(
+    source_id: str,
+    name: str,
+    path: Path,
+    description: str,
+    permission: str,
+    source_type: str,
+    used_ids: set[str],
+) -> dict[str, Any]:
+    resolved_path = path.expanduser().resolve()
+    clean_id = unique_source_id(source_id, used_ids)
+    return {
+        "id": clean_id,
+        "source_id": clean_id,
+        "name": name or resolved_path.name,
+        "path": str(resolved_path),
+        "description": description,
+        "permission": permission,
+        "permissions": [permission],
+        "type": source_type,
+        "read_only": True,
+        "exists": resolved_path.exists(),
+        "size_bytes": resolved_path.stat().st_size if resolved_path.exists() else 0,
+    }
+
+
+def unique_source_id(source_id: str, used_ids: set[str]) -> str:
+    base_id = sanitize_source_id(source_id) or "source"
+    next_id = base_id
+    suffix = 2
+    while next_id in used_ids:
+        next_id = f"{base_id}_{suffix}"
+        suffix += 1
+    used_ids.add(next_id)
+    return next_id
+
+
+def sanitize_source_id(source_id: str) -> str:
+    return "".join(character if character.isalnum() or character in {"_", "-"} else "_" for character in source_id.strip())
+
+
+def resolve_database_source(
+    source_id: str,
+    config_database_path: Path | None = None,
+    configured_sources: tuple[dict[str, str], ...] | list[dict[str, str]] = (),
+) -> dict[str, Any]:
+    clean_source_id = str(source_id or "").strip()
+    if not clean_source_id:
+        raise SQLiteExplorerError("source_id is required")
+
+    for source in list_available_databases(config_database_path, configured_sources):
+        if source["id"] == clean_source_id:
+            if source["permission"] != "sqlite.read":
+                raise SQLiteExplorerError(f"source is not readable: {clean_source_id}")
+            return source
+
+    raise SQLiteExplorerError(f"knowledge source not found: {clean_source_id}")
 
 
 def inspect_database(database_path: str | Path) -> dict[str, Any]:

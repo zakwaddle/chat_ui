@@ -283,6 +283,28 @@ Deliverable:
 
 Multiple knowledge sources available simultaneously.
 
+Codex Result:
+```
+• Completed Phase 5 from roadmap3.md.
+
+  Implemented:
+
+  - Added KNOWLEDGE_SOURCES_JSON configuration for external SQLite knowledge sources.
+  - Every source now has stable metadata: id, name, path, description, permission, type, read_only, exists, and size_bytes.
+  - The active chat database is always exposed as the chat source.
+  - Configured sources such as archive and project databases are listed alongside discovered databases without merging files.
+  - Added a list_knowledge_sources model tool.
+  - SQLite model tools now accept source_id as well as database_path, so the model can target chat, archive, project, or future memory databases independently.
+  - The UI database selector now shows source ids, descriptions, and permissions.
+  - Added regression tests in backend/test_phase5_knowledge_sources.py.
+
+  Verified:
+
+  - python3 -m unittest backend.test_phase5_knowledge_sources passes.
+  - python3 -m unittest discover backend passes: 60 tests.
+  - npm run build passes.
+```
+
 ---
 
 # Phase 6: Archive Integration

@@ -13,8 +13,10 @@ try:
     from .database import get_database_path
     from .sqlite_explorer import SQLiteExplorerError
     from .sqlite_explorer import describe_table
+    from .sqlite_explorer import list_available_databases
     from .sqlite_explorer import list_tables
     from .sqlite_explorer import preview_rows
+    from .sqlite_explorer import resolve_database_source
     from .sqlite_explorer import run_read_only_query
     from .sqlite_explorer import search_database
     from .sqlite_explorer import search_table
@@ -25,14 +27,17 @@ except ImportError:
     from database import get_database_path
     from sqlite_explorer import SQLiteExplorerError
     from sqlite_explorer import describe_table
+    from sqlite_explorer import list_available_databases
     from sqlite_explorer import list_tables
     from sqlite_explorer import preview_rows
+    from sqlite_explorer import resolve_database_source
     from sqlite_explorer import run_read_only_query
     from sqlite_explorer import search_database
     from sqlite_explorer import search_table
 
 
 CONTEXT_TOOL_NAME = "get_context_around_message"
+KNOWLEDGE_SOURCES_TOOL_NAME = "list_knowledge_sources"
 SQLITE_LIST_TABLES_TOOL_NAME = "list_tables"
 SQLITE_DESCRIBE_TABLE_TOOL_NAME = "describe_table"
 SQLITE_SAMPLE_ROWS_TOOL_NAME = "sample_rows"
@@ -54,6 +59,7 @@ class ToolExecutionContext:
     default_context_before: int
     default_context_after: int
     sqlite_database_path: Path | None = None
+    knowledge_sources: tuple[dict[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -189,7 +195,24 @@ CONTEXT_TOOL_DEFINITION = {
 
 SQLITE_DATABASE_PATH_PROPERTY = {
     "type": "string",
-    "description": "Optional absolute path to a SQLite database. Omit to inspect the active chat database.",
+    "description": "Optional absolute path to a SQLite database. Prefer source_id when a known knowledge source is available.",
+}
+
+SQLITE_SOURCE_ID_PROPERTY = {
+    "type": "string",
+    "description": "Optional knowledge source id from list_knowledge_sources. Omit source_id and database_path to inspect the active chat database.",
+}
+
+KNOWLEDGE_SOURCES_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": KNOWLEDGE_SOURCES_TOOL_NAME,
+        "description": "List available SQLite knowledge sources with ids, descriptions, paths, and read permissions.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
 }
 
 SQLITE_LIST_TABLES_TOOL_DEFINITION = {
@@ -200,6 +223,7 @@ SQLITE_LIST_TABLES_TOOL_DEFINITION = {
         "parameters": {
             "type": "object",
             "properties": {
+                "source_id": SQLITE_SOURCE_ID_PROPERTY,
                 "database_path": SQLITE_DATABASE_PATH_PROPERTY,
             },
         },
@@ -214,6 +238,7 @@ SQLITE_DESCRIBE_TABLE_TOOL_DEFINITION = {
         "parameters": {
             "type": "object",
             "properties": {
+                "source_id": SQLITE_SOURCE_ID_PROPERTY,
                 "database_path": SQLITE_DATABASE_PATH_PROPERTY,
                 "table_name": {
                     "type": "string",
@@ -233,6 +258,7 @@ SQLITE_SAMPLE_ROWS_TOOL_DEFINITION = {
         "parameters": {
             "type": "object",
             "properties": {
+                "source_id": SQLITE_SOURCE_ID_PROPERTY,
                 "database_path": SQLITE_DATABASE_PATH_PROPERTY,
                 "table_name": {
                     "type": "string",
@@ -259,6 +285,7 @@ SQLITE_SEARCH_TABLE_TOOL_DEFINITION = {
         "parameters": {
             "type": "object",
             "properties": {
+                "source_id": SQLITE_SOURCE_ID_PROPERTY,
                 "database_path": SQLITE_DATABASE_PATH_PROPERTY,
                 "table_name": {
                     "type": "string",
@@ -294,6 +321,7 @@ SQLITE_SEARCH_DATABASE_TOOL_DEFINITION = {
         "parameters": {
             "type": "object",
             "properties": {
+                "source_id": SQLITE_SOURCE_ID_PROPERTY,
                 "database_path": SQLITE_DATABASE_PATH_PROPERTY,
                 "query": {
                     "type": "string",
@@ -325,6 +353,7 @@ SQLITE_READ_ONLY_QUERY_TOOL_DEFINITION = {
         "parameters": {
             "type": "object",
             "properties": {
+                "source_id": SQLITE_SOURCE_ID_PROPERTY,
                 "database_path": SQLITE_DATABASE_PATH_PROPERTY,
                 "sql": {
                     "type": "string",
@@ -416,6 +445,12 @@ def execute_sqlite_list_tables_tool(arguments: dict[str, Any], context: ToolExec
     return _execute_sqlite_tool(lambda database_path: list_tables(database_path), arguments, context)
 
 
+def execute_knowledge_sources_tool(_arguments: dict[str, Any], context: ToolExecutionContext) -> dict[str, Any]:
+    return {
+        "sources": list_available_databases(context.sqlite_database_path, context.knowledge_sources),
+    }
+
+
 def execute_sqlite_describe_table_tool(arguments: dict[str, Any], context: ToolExecutionContext) -> dict[str, Any]:
     return _execute_sqlite_tool(
         lambda database_path: describe_table(database_path, str(arguments["table_name"]).strip()),
@@ -494,6 +529,11 @@ def _execute_sqlite_tool(
 
 
 def _read_database_path(arguments: dict[str, Any], context: ToolExecutionContext) -> Path:
+    raw_source_id = str(arguments.get("source_id") or "").strip()
+    if raw_source_id:
+        source = resolve_database_source(raw_source_id, context.sqlite_database_path, context.knowledge_sources)
+        return Path(source["path"])
+
     raw_path = str(arguments.get("database_path") or "").strip()
     if raw_path:
         return Path(raw_path)
@@ -506,12 +546,14 @@ def build_default_tool_registry(
     default_context_before: int,
     default_context_after: int,
     sqlite_database_path: Path | None = None,
+    knowledge_sources: tuple[dict[str, str], ...] = (),
 ) -> ToolRegistry:
     registry = ToolRegistry(
         ToolExecutionContext(
             default_context_before=default_context_before,
             default_context_after=default_context_after,
             sqlite_database_path=sqlite_database_path,
+            knowledge_sources=knowledge_sources,
         )
     )
     registry.register(
@@ -524,6 +566,18 @@ def build_default_tool_registry(
             ),
             definition=CONTEXT_TOOL_DEFINITION,
             executor=execute_context_tool_from_registry,
+        )
+    )
+    registry.register(
+        RegisteredTool(
+            metadata=ToolMetadata(
+                name=KNOWLEDGE_SOURCES_TOOL_NAME,
+                description="List available SQLite knowledge sources.",
+                permission="sqlite.read",
+                destructive=False,
+            ),
+            definition=KNOWLEDGE_SOURCES_TOOL_DEFINITION,
+            executor=execute_knowledge_sources_tool,
         )
     )
     registry.register(
