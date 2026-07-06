@@ -119,7 +119,7 @@ def normalize_audio_suffix(filename_or_suffix: str) -> str:
     suffix = Path(filename_or_suffix or "").suffix.lower()
     if not suffix and filename_or_suffix.startswith("."):
         suffix = filename_or_suffix.lower()
-    if suffix in {".flac", ".mp3", ".ogg", ".wav", ".webm", ".m4a", ".mp4"}:
+    if suffix in {".aac", ".flac", ".mp3", ".ogg", ".wav", ".webm", ".m4a", ".mp4"}:
         return suffix
 
     return ".webm"

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 try:
     from .prompt import DEFAULT_SYSTEM_PROMPT
@@ -57,6 +59,7 @@ class AppConfig:
     whisper_ffmpeg_path: Path
     whisper_timeout_seconds: float
     whisper_language: str
+    knowledge_sources: tuple[dict[str, str], ...]
 
 
 def load_config() -> AppConfig:
@@ -103,6 +106,7 @@ def load_config() -> AppConfig:
         whisper_ffmpeg_path=Path(_read_str("WHISPER_FFMPEG_PATH", "/usr/bin/ffmpeg")),
         whisper_timeout_seconds=_read_float("WHISPER_TIMEOUT_SECONDS", 120.0),
         whisper_language=_read_str("WHISPER_LANGUAGE", "en"),
+        knowledge_sources=_read_knowledge_sources("KNOWLEDGE_SOURCES_JSON"),
     )
 
 
@@ -155,3 +159,47 @@ def _read_bool(name: str, default: bool = False) -> bool:
         return default
 
     return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _read_knowledge_sources(name: str) -> tuple[dict[str, str], ...]:
+    raw_value = os.getenv(name)
+    if raw_value is None or raw_value.strip() == "":
+        return ()
+
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return ()
+
+    if not isinstance(parsed, list):
+        return ()
+
+    sources = []
+    for entry in parsed:
+        normalized = _normalize_knowledge_source(entry)
+        if normalized is not None:
+            sources.append(normalized)
+
+    return tuple(sources)
+
+
+def _normalize_knowledge_source(entry: Any) -> dict[str, str] | None:
+    if not isinstance(entry, dict):
+        return None
+
+    raw_path = str(entry.get("path") or "").strip()
+    if not raw_path:
+        return None
+
+    source_id = str(entry.get("id") or Path(raw_path).stem or "source").strip()
+    source_id = "".join(character if character.isalnum() or character in {"_", "-"} else "_" for character in source_id)
+    if not source_id:
+        return None
+
+    return {
+        "id": source_id,
+        "path": raw_path,
+        "name": str(entry.get("name") or Path(raw_path).name).strip() or Path(raw_path).name,
+        "description": str(entry.get("description") or "External SQLite knowledge source").strip(),
+        "permission": str(entry.get("permission") or "sqlite.read").strip() or "sqlite.read",
+    }

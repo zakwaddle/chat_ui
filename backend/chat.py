@@ -76,6 +76,7 @@ class ChatOrchestratorConfig:
     max_tool_expansion_passes: int
     default_generation_params: GenerationParams
     system_prompt: str
+    knowledge_sources: tuple[dict[str, str], ...] = ()
 
 
 class ChatRequestError(ValueError):
@@ -369,6 +370,7 @@ class ChatOrchestrator:
         self.tool_registry = build_default_tool_registry(
             default_context_before=config.default_context_before,
             default_context_after=config.default_context_after,
+            knowledge_sources=config.knowledge_sources,
         )
 
     def complete_turn(self, payload: dict[str, Any]) -> dict[str, Any]:
