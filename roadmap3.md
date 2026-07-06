@@ -235,6 +235,26 @@ Deliverable:
 
 Natural-language search over SQLite databases.
 
+Codex Result:
+```
+• Completed Phase 4 from roadmap3.md.
+
+  Implemented:
+
+  - Added search_database() support in backend/sqlite_explorer.py.
+  - Registered a model-facing search_database tool with sqlite.read permission.
+  - Search now accepts natural-language text and scans text-like columns across tables.
+  - Added optional table restriction, safe result limits, tokenized matching, matched column metadata, and per-result scores.
+  - Kept search read-only through the same SQLite mode=ro and query_only connection path used by the explorer.
+  - Added regression tests in backend/test_phase4_database_search.py.
+
+  Verified:
+
+  - python3 -m unittest backend.test_phase4_database_search passes.
+  - python3 -m unittest discover backend passes: 56 tests.
+  - npm run build passes.
+```
+
 ---
 
 # Phase 5: External Knowledge Sources

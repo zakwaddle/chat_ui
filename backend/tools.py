@@ -16,6 +16,7 @@ try:
     from .sqlite_explorer import list_tables
     from .sqlite_explorer import preview_rows
     from .sqlite_explorer import run_read_only_query
+    from .sqlite_explorer import search_database
     from .sqlite_explorer import search_table
 except ImportError:
     from database import get_message
@@ -27,6 +28,7 @@ except ImportError:
     from sqlite_explorer import list_tables
     from sqlite_explorer import preview_rows
     from sqlite_explorer import run_read_only_query
+    from sqlite_explorer import search_database
     from sqlite_explorer import search_table
 
 
@@ -35,6 +37,7 @@ SQLITE_LIST_TABLES_TOOL_NAME = "list_tables"
 SQLITE_DESCRIBE_TABLE_TOOL_NAME = "describe_table"
 SQLITE_SAMPLE_ROWS_TOOL_NAME = "sample_rows"
 SQLITE_SEARCH_TABLE_TOOL_NAME = "search_table"
+SQLITE_SEARCH_DATABASE_TOOL_NAME = "search_database"
 SQLITE_READ_ONLY_QUERY_TOOL_NAME = "run_read_only_query"
 
 
@@ -283,6 +286,37 @@ SQLITE_SEARCH_TABLE_TOOL_DEFINITION = {
     },
 }
 
+SQLITE_SEARCH_DATABASE_TOOL_DEFINITION = {
+    "type": "function",
+    "function": {
+        "name": SQLITE_SEARCH_DATABASE_TOOL_NAME,
+        "description": "Search across text-like columns in all tables of a SQLite database using plain natural-language text. Use this for common searches before writing SQL.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "database_path": SQLITE_DATABASE_PATH_PROPERTY,
+                "query": {
+                    "type": "string",
+                    "description": "Natural-language text to search for, such as 'Henry birthday' or 'messages about embeddings'.",
+                },
+                "tables": {
+                    "type": "array",
+                    "description": "Optional table names to restrict the search.",
+                    "items": {"type": "string"},
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of matches to return across the database. Values are clamped to a safe bound.",
+                    "default": 25,
+                    "minimum": 1,
+                    "maximum": 50,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+}
+
 SQLITE_READ_ONLY_QUERY_TOOL_DEFINITION = {
     "type": "function",
     "function": {
@@ -418,6 +452,21 @@ def execute_sqlite_search_table_tool(arguments: dict[str, Any], context: ToolExe
     )
 
 
+def execute_sqlite_search_database_tool(arguments: dict[str, Any], context: ToolExecutionContext) -> dict[str, Any]:
+    raw_tables = arguments.get("tables")
+    tables = raw_tables if isinstance(raw_tables, list) else None
+    return _execute_sqlite_tool(
+        lambda database_path: search_database(
+            database_path,
+            str(arguments["query"]).strip(),
+            tables=tables,
+            limit=_read_positive_int(arguments.get("limit"), 25),
+        ),
+        arguments,
+        context,
+    )
+
+
 def execute_sqlite_read_only_query_tool(arguments: dict[str, Any], context: ToolExecutionContext) -> dict[str, Any]:
     raw_params = arguments.get("params")
     params = raw_params if isinstance(raw_params, list) else []
@@ -523,6 +572,18 @@ def build_default_tool_registry(
             ),
             definition=SQLITE_SEARCH_TABLE_TOOL_DEFINITION,
             executor=execute_sqlite_search_table_tool,
+        )
+    )
+    registry.register(
+        RegisteredTool(
+            metadata=ToolMetadata(
+                name=SQLITE_SEARCH_DATABASE_TOOL_NAME,
+                description="Search text-like columns across a SQLite database using natural-language text.",
+                permission="sqlite.read",
+                destructive=False,
+            ),
+            definition=SQLITE_SEARCH_DATABASE_TOOL_DEFINITION,
+            executor=execute_sqlite_search_database_tool,
         )
     )
     registry.register(

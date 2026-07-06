@@ -16,6 +16,9 @@ except ImportError:
 SQLITE_EXTENSIONS = {".db", ".sqlite", ".sqlite3"}
 MAX_PREVIEW_LIMIT = 100
 MAX_QUERY_LIMIT = 200
+MAX_DATABASE_SEARCH_LIMIT = 50
+MAX_DATABASE_SEARCH_TABLES = 50
+MAX_SEARCH_TERMS = 8
 WRITE_SQL_PATTERN = re.compile(
     r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|ATTACH|DETACH|REPLACE|CREATE|VACUUM|REINDEX|ANALYZE)\b",
     re.IGNORECASE,
@@ -156,6 +159,64 @@ def search_table(
     }
 
 
+def search_database(
+    database_path: str | Path,
+    query: str,
+    limit: int = 25,
+    tables: list[str] | None = None,
+) -> dict[str, Any]:
+    path = normalize_database_path(database_path)
+    search_text = str(query or "").strip()
+    if not search_text:
+        raise SQLiteExplorerError("search query is required")
+
+    clean_limit = clamp_database_search_limit(limit)
+    terms = tokenize_search_query(search_text)
+    if not terms:
+        raise SQLiteExplorerError("search query must contain searchable text")
+
+    with read_only_connection(path) as connection:
+        table_rows = list_tables_for_connection(connection)
+        requested_tables = normalize_requested_tables(table_rows, tables)
+        results: list[dict[str, Any]] = []
+        searched_tables: list[dict[str, Any]] = []
+
+        for table in requested_tables[:MAX_DATABASE_SEARCH_TABLES]:
+            column_info = table_columns(connection, table["name"])
+            searchable_columns = normalize_search_columns(column_info)
+            if not searchable_columns:
+                continue
+
+            table_results = search_table_for_terms(
+                connection=connection,
+                table_name=table["name"],
+                searchable_columns=searchable_columns,
+                terms=terms,
+                remaining_limit=clean_limit - len(results),
+            )
+            searched_tables.append(
+                {
+                    "name": table["name"],
+                    "type": table["type"],
+                    "searched_columns": searchable_columns,
+                    "match_count": len(table_results),
+                }
+            )
+            results.extend(table_results)
+            if len(results) >= clean_limit:
+                break
+
+    return {
+        "database": database_metadata(path),
+        "query": search_text,
+        "terms": terms,
+        "searched_tables": searched_tables,
+        "results": results,
+        "limit": clean_limit,
+        "truncated": len(results) >= clean_limit,
+    }
+
+
 def run_read_only_query(database_path: str | Path, sql: str, params: list[Any] | None = None, limit: int = 100) -> dict[str, Any]:
     path = normalize_database_path(database_path)
     statement = validate_read_only_sql(sql)
@@ -289,6 +350,14 @@ def clamp_query_limit(limit: int) -> int:
     return max(1, min(MAX_QUERY_LIMIT, parsed_limit))
 
 
+def clamp_database_search_limit(limit: int) -> int:
+    try:
+        parsed_limit = int(limit)
+    except (TypeError, ValueError):
+        parsed_limit = 25
+    return max(1, min(MAX_DATABASE_SEARCH_LIMIT, parsed_limit))
+
+
 def normalize_search_columns(column_info: list[dict[str, Any]], columns: list[str] | None = None) -> list[str]:
     available = {column["name"]: column for column in column_info}
     if columns:
@@ -308,6 +377,87 @@ def normalize_search_columns(column_info: list[dict[str, Any]], columns: list[st
 
 def escape_like_value(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def tokenize_search_query(query: str) -> list[str]:
+    terms = []
+    for term in re.findall(r"[\w'-]+", query.lower()):
+        clean_term = term.strip("'-_")
+        if len(clean_term) < 2:
+            continue
+        if clean_term not in terms:
+            terms.append(clean_term)
+        if len(terms) >= MAX_SEARCH_TERMS:
+            break
+    return terms
+
+
+def normalize_requested_tables(
+    available_tables: list[dict[str, Any]],
+    tables: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    if not tables:
+        return available_tables
+
+    available_by_name = {table["name"]: table for table in available_tables}
+    requested_names = [str(table).strip() for table in tables if str(table).strip()]
+    unknown_tables = [table for table in requested_names if table not in available_by_name]
+    if unknown_tables:
+        raise SQLiteExplorerError(f"unknown search tables: {', '.join(unknown_tables)}")
+
+    return [available_by_name[name] for name in requested_names]
+
+
+def search_table_for_terms(
+    connection: sqlite3.Connection,
+    table_name: str,
+    searchable_columns: list[str],
+    terms: list[str],
+    remaining_limit: int,
+) -> list[dict[str, Any]]:
+    if remaining_limit <= 0:
+        return []
+
+    predicates = []
+    params: list[Any] = []
+    for term in terms:
+        like_value = f"%{escape_like_value(term)}%"
+        term_predicates = [f"{quote_identifier(column)} LIKE ? ESCAPE '\\'" for column in searchable_columns]
+        predicates.append("(" + " OR ".join(term_predicates) + ")")
+        params.extend(like_value for _column in searchable_columns)
+
+    where_clause = " OR ".join(predicates)
+    rows = connection.execute(
+        f"SELECT * FROM {quote_identifier(table_name)} WHERE {where_clause} LIMIT ?",
+        [*params, remaining_limit],
+    ).fetchall()
+
+    results = []
+    for row in rows:
+        row_dict = {key: serialize_cell(value) for key, value in dict(row).items()}
+        matched_columns = matched_row_columns(row_dict, searchable_columns, terms)
+        results.append(
+            {
+                "table": table_name,
+                "matched_columns": matched_columns,
+                "score": sum(len(columns) for columns in matched_columns.values()),
+                "row": row_dict,
+            }
+        )
+
+    return sorted(results, key=lambda result: result["score"], reverse=True)
+
+
+def matched_row_columns(row: dict[str, Any], searchable_columns: list[str], terms: list[str]) -> dict[str, list[str]]:
+    matches: dict[str, list[str]] = {}
+    for term in terms:
+        for column in searchable_columns:
+            value = row.get(column)
+            if value is None:
+                continue
+            if term in str(value).lower():
+                matches.setdefault(term, []).append(column)
+    return matches
 
 
 def validate_read_only_sql(sql: str) -> str:
