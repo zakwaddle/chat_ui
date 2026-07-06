@@ -11,6 +11,12 @@ except ImportError:
 
 
 DEFAULT_EMBEDDING_MODEL_PATH = Path("/storage/gguf/nomic-embed-text-v2-moe.Q8_0.gguf")
+DEFAULT_LLAMA_MODELS_DIR = Path("/storage/gguf")
+DEFAULT_LLAMA_SERVER_PATH = Path("/home/zak/engines/llama.cpp/build/bin/llama-server")
+DEFAULT_CHAT_MODEL_PATH = DEFAULT_LLAMA_MODELS_DIR / "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"
+DEFAULT_WHISPER_CPP_DIR = Path("/home/zak/engines/whisper.cpp")
+DEFAULT_WHISPER_EXECUTABLE_PATH = DEFAULT_WHISPER_CPP_DIR / "build/bin/whisper-cli"
+DEFAULT_WHISPER_MODEL_PATH = DEFAULT_WHISPER_CPP_DIR / "models/ggml-large-v3.bin"
 
 
 @dataclass(frozen=True)
@@ -37,11 +43,26 @@ class AppConfig:
     default_context_after: int
     max_tool_expansion_passes: int
     system_prompt: str
+    llama_server_path: Path
+    llama_models_dir: Path
+    llama_default_model_path: Path
+    llama_host: str
+    llama_port: int
+    llama_context_size: int
+    llama_batch_size: int
+    llama_gpu_layers: int
+    llama_threads: int
+    whisper_executable_path: Path
+    whisper_model_path: Path
+    whisper_ffmpeg_path: Path
+    whisper_timeout_seconds: float
+    whisper_language: str
 
 
 def load_config() -> AppConfig:
     model_endpoint_url = _read_str("MODEL_ENDPOINT_URL", "http://localhost:8080/v1")
     embedding_model_path = Path(_read_str("EMBEDDING_MODEL_PATH", str(DEFAULT_EMBEDDING_MODEL_PATH)))
+    llama_default_model_path = Path(_read_str("LLAMA_DEFAULT_MODEL_PATH", str(DEFAULT_CHAT_MODEL_PATH)))
 
     database_path_raw = os.getenv("DATABASE_PATH")
 
@@ -68,6 +89,20 @@ def load_config() -> AppConfig:
         default_context_after=_read_int("DEFAULT_CONTEXT_AFTER", 3, minimum=0),
         max_tool_expansion_passes=_read_int("MAX_TOOL_EXPANSION_PASSES", 1, minimum=0),
         system_prompt=_read_str("SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT),
+        llama_server_path=Path(_read_str("LLAMA_SERVER_PATH", str(DEFAULT_LLAMA_SERVER_PATH))),
+        llama_models_dir=Path(_read_str("LLAMA_MODELS_DIR", str(DEFAULT_LLAMA_MODELS_DIR))),
+        llama_default_model_path=llama_default_model_path,
+        llama_host=_read_str("LLAMA_HOST", "127.0.0.1"),
+        llama_port=_read_int("LLAMA_PORT", 8080, minimum=1),
+        llama_context_size=_read_int("LLAMA_CONTEXT_SIZE", 13000, minimum=1),
+        llama_batch_size=_read_int("LLAMA_BATCH_SIZE", 2048, minimum=1),
+        llama_gpu_layers=_read_int("LLAMA_GPU_LAYERS", 13, minimum=0),
+        llama_threads=_read_int("LLAMA_THREADS", 40, minimum=1),
+        whisper_executable_path=Path(_read_str("WHISPER_EXECUTABLE_PATH", str(DEFAULT_WHISPER_EXECUTABLE_PATH))),
+        whisper_model_path=Path(_read_str("WHISPER_MODEL_PATH", str(DEFAULT_WHISPER_MODEL_PATH))),
+        whisper_ffmpeg_path=Path(_read_str("WHISPER_FFMPEG_PATH", "/usr/bin/ffmpeg")),
+        whisper_timeout_seconds=_read_float("WHISPER_TIMEOUT_SECONDS", 120.0),
+        whisper_language=_read_str("WHISPER_LANGUAGE", "en"),
     )
 
 
