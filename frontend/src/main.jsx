@@ -6,6 +6,7 @@ const THEME_STORAGE_KEY = "associative-chat-theme";
 const TEMPERATURE_STORAGE_KEY = "associative-chat-temperature";
 const REPEAT_PENALTY_STORAGE_KEY = "associative-chat-repeat-penalty";
 const ACTIVE_CONVERSATION_STORAGE_KEY = "associative-chat-active-conversation";
+const LLAMA_SETTINGS_STORAGE_KEY = "associative-chat-llama-settings";
 
 const initialMessages = [
   {
@@ -27,6 +28,15 @@ function readInitialTheme() {
 
 function readStoredValue(key, fallback) {
   return globalThis.localStorage?.getItem(key) || fallback;
+}
+
+function readStoredJson(key, fallback) {
+  try {
+    const value = globalThis.localStorage?.getItem(key);
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function buildMemoryDebug(data) {
@@ -345,12 +355,22 @@ function App() {
   const [draft, setDraft] = useState("");
   const [temperature, setTemperature] = useState(() => readStoredValue(TEMPERATURE_STORAGE_KEY, "0.7"));
   const [repeatPenalty, setRepeatPenalty] = useState(() => readStoredValue(REPEAT_PENALTY_STORAGE_KEY, "1.1"));
+  const [llamaModels, setLlamaModels] = useState([]);
+  const [llamaStatus, setLlamaStatus] = useState(null);
+  const [llamaSettings, setLlamaSettings] = useState(() => readStoredJson(LLAMA_SETTINGS_STORAGE_KEY, {}));
   const [isSending, setIsSending] = useState(false);
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [isTranscribingVoice, setIsTranscribingVoice] = useState(false);
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
+  const [isLoadingLlama, setIsLoadingLlama] = useState(false);
+  const [isUpdatingLlama, setIsUpdatingLlama] = useState(false);
   const [error, setError] = useState("");
   const [copiedMessageId, setCopiedMessageId] = useState(null);
   const messageListRef = useRef(null);
   const messageEndRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const voiceChunksRef = useRef([]);
+  const voiceStreamRef = useRef(null);
   const hasRestoredConversationRef = useRef(false);
   const shouldStickToBottomRef = useRef(true);
 
@@ -359,6 +379,7 @@ function App() {
 
   useEffect(() => {
     loadConversations();
+    loadLlamaRuntime();
   }, []);
 
   useEffect(() => {
@@ -376,6 +397,10 @@ function App() {
   }, [repeatPenalty]);
 
   useEffect(() => {
+    localStorage.setItem(LLAMA_SETTINGS_STORAGE_KEY, JSON.stringify(llamaSettings));
+  }, [llamaSettings]);
+
+  useEffect(() => {
     if (conversationId) {
       localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, String(conversationId));
     }
@@ -386,6 +411,13 @@ function App() {
       messageEndRef.current?.scrollIntoView({ block: "end" });
     }
   }, [messages]);
+
+  useEffect(
+    () => () => {
+      stopVoiceTracks();
+    },
+    []
+  );
 
   function toggleTheme() {
     setTheme((currentTheme) => (currentTheme === "dark" ? "light" : "dark"));
@@ -416,6 +448,70 @@ function App() {
     } finally {
       setIsLoadingConversations(false);
     }
+  }
+
+  async function loadLlamaRuntime() {
+    setIsLoadingLlama(true);
+    try {
+      const [modelsResponse, statusResponse] = await Promise.all([
+        fetch("/api/llama/models"),
+        fetch("/api/llama/status")
+      ]);
+      const modelsData = await modelsResponse.json();
+      const statusData = await statusResponse.json();
+
+      if (!modelsResponse.ok) {
+        throw new Error(modelsData.error || "Unable to load GGUF models");
+      }
+      if (!statusResponse.ok) {
+        throw new Error(statusData.error || "Unable to load llama server status");
+      }
+
+      const defaults = modelsData.defaults || {};
+      setLlamaModels(modelsData.models || []);
+      setLlamaStatus(statusData);
+      setLlamaSettings((currentSettings) => ({
+        ...defaults,
+        ...currentSettings
+      }));
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to load llama server controls");
+    } finally {
+      setIsLoadingLlama(false);
+    }
+  }
+
+  async function updateLlamaServer(action) {
+    setIsUpdatingLlama(true);
+    setError("");
+
+    try {
+      const response = await fetch(`/api/llama/${action}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: action === "stop" ? undefined : JSON.stringify(buildLlamaLaunchPayload(llamaSettings))
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || `Unable to ${action} llama server`);
+      }
+
+      setLlamaStatus(data);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : `Unable to ${action} llama server`);
+    } finally {
+      setIsUpdatingLlama(false);
+    }
+  }
+
+  function setLlamaSetting(name, value) {
+    setLlamaSettings((currentSettings) => ({
+      ...currentSettings,
+      [name]: value
+    }));
   }
 
   async function createNewConversation() {
@@ -609,6 +705,100 @@ function App() {
     }
   }
 
+  async function toggleVoiceRecording() {
+    if (isRecordingVoice) {
+      mediaRecorderRef.current?.stop();
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      setError("Voice input is not available in this browser.");
+      return;
+    }
+
+    setError("");
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = selectRecorderMimeType();
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+
+      voiceStreamRef.current = stream;
+      voiceChunksRef.current = [];
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size) {
+          voiceChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onerror = () => {
+        setError("Voice recording failed.");
+        setIsRecordingVoice(false);
+        setIsTranscribingVoice(false);
+        stopVoiceTracks();
+      };
+
+      recorder.onstop = () => {
+        const chunks = voiceChunksRef.current;
+        const type = recorder.mimeType || mimeType || "audio/webm";
+        mediaRecorderRef.current = null;
+        voiceChunksRef.current = [];
+        setIsRecordingVoice(false);
+        stopVoiceTracks();
+
+        if (chunks.length > 0) {
+          transcribeVoiceBlob(new Blob(chunks, { type }));
+        }
+      };
+
+      recorder.start();
+      setIsRecordingVoice(true);
+    } catch (recordingError) {
+      stopVoiceTracks();
+      setIsRecordingVoice(false);
+      setError(recordingError instanceof Error ? recordingError.message : "Unable to start voice recording");
+    }
+  }
+
+  async function transcribeVoiceBlob(blob) {
+    setIsTranscribingVoice(true);
+    setError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("audio", blob, voiceFilenameForBlob(blob));
+
+      const response = await fetch("/api/voice/transcribe", {
+        method: "POST",
+        body: formData
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Unable to transcribe voice input");
+      }
+
+      const transcript = String(data.transcript || "").trim();
+      if (transcript) {
+        setDraft((currentDraft) => {
+          const separator = currentDraft.trim() ? "\n" : "";
+          return `${currentDraft}${separator}${transcript}`;
+        });
+      }
+    } catch (transcriptionError) {
+      setError(transcriptionError instanceof Error ? transcriptionError.message : "Unable to transcribe voice input");
+    } finally {
+      setIsTranscribingVoice(false);
+    }
+  }
+
+  function stopVoiceTracks() {
+    voiceStreamRef.current?.getTracks().forEach((track) => track.stop());
+    voiceStreamRef.current = null;
+  }
+
   function handleMessageKeyDown(event) {
     if (event.key !== "Enter" || event.shiftKey) {
       return;
@@ -651,6 +841,127 @@ function App() {
               New
             </button>
           </div>
+
+          <section className="llama-panel" aria-label="Llama server management">
+            <div className="llama-panel-header">
+              <h2>llama.cpp</h2>
+              <button type="button" onClick={loadLlamaRuntime} disabled={isLoadingLlama || isUpdatingLlama}>
+                Refresh
+              </button>
+            </div>
+
+            <div className="llama-status-row">
+              <span className={`llama-state ${llamaStatus?.endpoint_reachable ? "llama-state-online" : ""}`}>
+                {llamaStatus?.endpoint_reachable ? "Online" : "Offline"}
+              </span>
+              <span>{llamaStatus?.process_state || "unknown"}</span>
+            </div>
+
+            <label>
+              <span>Chat model</span>
+              <select
+                value={llamaSettings.model_path || ""}
+                onChange={(event) => setLlamaSetting("model_path", event.target.value)}
+              >
+                <option value="">Select GGUF</option>
+                {llamaModels
+                  .filter((model) => !model.is_embedding)
+                  .map((model) => (
+                    <option value={model.path} key={model.path}>
+                      {model.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+
+            <label>
+              <span>Embedding model</span>
+              <select
+                value={llamaSettings.embedding_model_path || ""}
+                onChange={(event) => setLlamaSetting("embedding_model_path", event.target.value)}
+              >
+                <option value="">Select GGUF</option>
+                {llamaModels.map((model) => (
+                  <option value={model.path} key={model.path}>
+                    {model.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="llama-grid">
+              <label>
+                <span>GPU layers</span>
+                <input
+                  min="0"
+                  type="number"
+                  value={llamaSettings.gpu_layers ?? ""}
+                  onChange={(event) => setLlamaSetting("gpu_layers", event.target.value)}
+                />
+              </label>
+              <label>
+                <span>Context</span>
+                <input
+                  min="1"
+                  type="number"
+                  value={llamaSettings.context_size ?? ""}
+                  onChange={(event) => setLlamaSetting("context_size", event.target.value)}
+                />
+              </label>
+              <label>
+                <span>Batch</span>
+                <input
+                  min="1"
+                  type="number"
+                  value={llamaSettings.batch_size ?? ""}
+                  onChange={(event) => setLlamaSetting("batch_size", event.target.value)}
+                />
+              </label>
+              <label>
+                <span>Threads</span>
+                <input
+                  min="1"
+                  type="number"
+                  value={llamaSettings.threads ?? ""}
+                  onChange={(event) => setLlamaSetting("threads", event.target.value)}
+                />
+              </label>
+            </div>
+
+            <div className="llama-grid">
+              <label>
+                <span>Port</span>
+                <input
+                  min="1"
+                  type="number"
+                  value={llamaSettings.port ?? ""}
+                  onChange={(event) => setLlamaSetting("port", event.target.value)}
+                />
+              </label>
+              <label>
+                <span>Temp</span>
+                <input
+                  min="0"
+                  step="0.05"
+                  type="number"
+                  value={llamaSettings.temperature ?? ""}
+                  onChange={(event) => setLlamaSetting("temperature", event.target.value)}
+                />
+              </label>
+            </div>
+
+            <div className="llama-actions">
+              <button type="button" onClick={() => updateLlamaServer("start")} disabled={isUpdatingLlama}>
+                Start
+              </button>
+              <button type="button" onClick={() => updateLlamaServer("restart")} disabled={isUpdatingLlama}>
+                Restart
+              </button>
+              <button type="button" onClick={() => updateLlamaServer("stop")} disabled={isUpdatingLlama}>
+                Stop
+              </button>
+            </div>
+          </section>
 
           <div className="conversation-list">
             {conversations.length > 0 ? (
@@ -756,6 +1067,16 @@ function App() {
             onKeyDown={handleMessageKeyDown}
             placeholder="Type a message..."
           />
+          <button
+            className={`voice-button ${isRecordingVoice ? "voice-button-recording" : ""}`}
+            type="button"
+            onClick={toggleVoiceRecording}
+            disabled={isSending || isTranscribingVoice}
+            aria-pressed={isRecordingVoice}
+            title={isRecordingVoice ? "Stop recording" : "Record voice input"}
+          >
+            {isRecordingVoice ? "Stop" : isTranscribingVoice ? "..." : "Mic"}
+          </button>
           <button type="submit" disabled={!canSend}>
             Send
           </button>
@@ -764,6 +1085,44 @@ function App() {
       </section>
     </main>
   );
+}
+
+function selectRecorderMimeType() {
+  const supportedTypes = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/ogg"];
+  return supportedTypes.find((type) => MediaRecorder.isTypeSupported(type)) || "";
+}
+
+function voiceFilenameForBlob(blob) {
+  if (blob.type.includes("ogg")) {
+    return "voice.ogg";
+  }
+  if (blob.type.includes("wav")) {
+    return "voice.wav";
+  }
+
+  return "voice.webm";
+}
+
+function buildLlamaLaunchPayload(settings) {
+  return {
+    ...settings,
+    port: numberOrEmpty(settings.port),
+    context_size: numberOrEmpty(settings.context_size),
+    batch_size: numberOrEmpty(settings.batch_size),
+    gpu_layers: numberOrEmpty(settings.gpu_layers),
+    threads: numberOrEmpty(settings.threads),
+    temperature: numberOrEmpty(settings.temperature),
+    repeat_penalty: numberOrEmpty(settings.repeat_penalty)
+  };
+}
+
+function numberOrEmpty(value) {
+  if (value === "" || value === null || value === undefined) {
+    return "";
+  }
+
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : "";
 }
 
 createRoot(document.getElementById("root")).render(<App />);
