@@ -54,6 +54,34 @@ Deliverable:
 
 Voice input works consistently on desktop and mobile.
 
+Codex Result:
+```
+• Implemented Phase 1 from roadmap3.md.
+
+  Changed:
+
+  - Improved voice support detection for HTTPS/localhost, microphone API, and MediaRecorder.
+  - Added Safari/iPad-compatible recorder MIME choices: audio/mp4, audio/mp4;codecs=mp4a.40.2, and audio/aac.
+  - Added clearer microphone permission/device/recording error messages.
+  - Made recorder stop more reliable by flushing data before stop and handling empty recordings gracefully.
+  - Preserved .aac uploads on the backend so mobile recordings are passed correctly to ffmpeg.
+  - Added a regression test for mobile audio suffix handling.
+
+  Verified:
+
+  - python3 -m unittest backend.test_phase6_voice passes.
+  - npm run build passes.
+  - Backend health check returns {"status":"ok"}.
+
+  Running locally:
+
+  - Frontend: http://localhost:5173/
+  - Network/mobile URL: http://192.168.6.138:5173/
+  - Backend: http://localhost:5000/
+
+  Note: real transcription still depends on the local Whisper/ffmpeg paths being configured and available.
+```
+
 ---
 
 # Phase 2: SQLite Explorer

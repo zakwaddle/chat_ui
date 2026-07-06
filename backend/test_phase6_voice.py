@@ -79,6 +79,13 @@ class VoiceInputTest(unittest.TestCase):
 
         self.assertEqual(transcript, "Hello there continue please")
 
+    def test_mobile_audio_suffixes_are_preserved(self) -> None:
+        from backend.voice import normalize_audio_suffix
+
+        self.assertEqual(normalize_audio_suffix("voice.mp4"), ".mp4")
+        self.assertEqual(normalize_audio_suffix("voice.m4a"), ".m4a")
+        self.assertEqual(normalize_audio_suffix("voice.aac"), ".aac")
+
     def test_whisper_runner_builds_cli_command_and_cleans_text(self) -> None:
         from backend.voice import WhisperConfig, WhisperCppTranscriber
 

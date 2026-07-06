@@ -707,12 +707,13 @@ function App() {
 
   async function toggleVoiceRecording() {
     if (isRecordingVoice) {
-      mediaRecorderRef.current?.stop();
+      stopVoiceRecording();
       return;
     }
 
-    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-      setError("Voice input is not available in this browser.");
+    const support = getVoiceRecordingSupport();
+    if (!support.supported) {
+      setError(support.message);
       return;
     }
 
@@ -721,7 +722,8 @@ function App() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mimeType = selectRecorderMimeType();
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const recorderOptions = mimeType ? { mimeType } : undefined;
+      const recorder = new MediaRecorder(stream, recorderOptions);
 
       voiceStreamRef.current = stream;
       voiceChunksRef.current = [];
@@ -733,16 +735,18 @@ function App() {
         }
       };
 
-      recorder.onerror = () => {
-        setError("Voice recording failed.");
+      recorder.onerror = (event) => {
+        setError(formatVoiceError(event.error, "Voice recording failed."));
         setIsRecordingVoice(false);
         setIsTranscribingVoice(false);
+        mediaRecorderRef.current = null;
+        voiceChunksRef.current = [];
         stopVoiceTracks();
       };
 
       recorder.onstop = () => {
         const chunks = voiceChunksRef.current;
-        const type = recorder.mimeType || mimeType || "audio/webm";
+        const type = recorder.mimeType || mimeType || chunks[0]?.type || "audio/webm";
         mediaRecorderRef.current = null;
         voiceChunksRef.current = [];
         setIsRecordingVoice(false);
@@ -750,15 +754,19 @@ function App() {
 
         if (chunks.length > 0) {
           transcribeVoiceBlob(new Blob(chunks, { type }));
+        } else {
+          setError("No audio was recorded. Check microphone access and try again.");
         }
       };
 
-      recorder.start();
+      recorder.start(1000);
       setIsRecordingVoice(true);
     } catch (recordingError) {
       stopVoiceTracks();
       setIsRecordingVoice(false);
-      setError(recordingError instanceof Error ? recordingError.message : "Unable to start voice recording");
+      mediaRecorderRef.current = null;
+      voiceChunksRef.current = [];
+      setError(formatVoiceError(recordingError, "Unable to start voice recording."));
     }
   }
 
@@ -797,6 +805,22 @@ function App() {
   function stopVoiceTracks() {
     voiceStreamRef.current?.getTracks().forEach((track) => track.stop());
     voiceStreamRef.current = null;
+  }
+
+  function stopVoiceRecording() {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === "inactive") {
+      setIsRecordingVoice(false);
+      stopVoiceTracks();
+      return;
+    }
+
+    try {
+      recorder.requestData?.();
+    } catch {
+      // Some WebKit builds throw if requestData races with stop; stopping still flushes data.
+    }
+    recorder.stop();
   }
 
   function handleMessageKeyDown(event) {
@@ -1088,11 +1112,73 @@ function App() {
 }
 
 function selectRecorderMimeType() {
-  const supportedTypes = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/ogg"];
-  return supportedTypes.find((type) => MediaRecorder.isTypeSupported(type)) || "";
+  const supportedTypes = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4;codecs=mp4a.40.2",
+    "audio/mp4",
+    "audio/aac",
+    "audio/ogg;codecs=opus",
+    "audio/ogg"
+  ];
+  return supportedTypes.find((type) => MediaRecorder.isTypeSupported?.(type)) || "";
+}
+
+function getVoiceRecordingSupport() {
+  if (!window.isSecureContext && !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname)) {
+    return {
+      supported: false,
+      message: "Voice input requires HTTPS or localhost on this browser."
+    };
+  }
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return {
+      supported: false,
+      message: "This browser cannot access the microphone. Try Safari 14.5+, Chrome, or Edge."
+    };
+  }
+
+  if (!window.MediaRecorder) {
+    return {
+      supported: false,
+      message: "This browser cannot record microphone audio for transcription."
+    };
+  }
+
+  return { supported: true, message: "" };
+}
+
+function formatVoiceError(error, fallback) {
+  const name = error?.name || "";
+  const message = error?.message || "";
+
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return "Microphone access was blocked. Allow microphone access in the browser and try again.";
+  }
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+    return "No microphone was found on this device.";
+  }
+  if (name === "NotReadableError" || name === "TrackStartError") {
+    return "The microphone is already in use or could not be started.";
+  }
+  if (name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") {
+    return "This microphone does not support the requested recording settings.";
+  }
+  if (name === "AbortError") {
+    return "Microphone recording was interrupted.";
+  }
+
+  return message ? `${fallback} ${message}` : fallback;
 }
 
 function voiceFilenameForBlob(blob) {
+  if (blob.type.includes("mp4")) {
+    return "voice.mp4";
+  }
+  if (blob.type.includes("aac")) {
+    return "voice.aac";
+  }
   if (blob.type.includes("ogg")) {
     return "voice.ogg";
   }
