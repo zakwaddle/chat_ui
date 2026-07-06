@@ -1,6 +1,11 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
+
+const THEME_STORAGE_KEY = "associative-chat-theme";
+const TEMPERATURE_STORAGE_KEY = "associative-chat-temperature";
+const REPEAT_PENALTY_STORAGE_KEY = "associative-chat-repeat-penalty";
+const ACTIVE_CONVERSATION_STORAGE_KEY = "associative-chat-active-conversation";
 
 const initialMessages = [
   {
@@ -10,6 +15,19 @@ const initialMessages = [
     memoryDebug: null
   }
 ];
+
+function readInitialTheme() {
+  const savedTheme = globalThis.localStorage?.getItem(THEME_STORAGE_KEY);
+  if (savedTheme === "light" || savedTheme === "dark") {
+    return savedTheme;
+  }
+
+  return globalThis.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function readStoredValue(key, fallback) {
+  return globalThis.localStorage?.getItem(key) || fallback;
+}
 
 function buildMemoryDebug(data) {
   return {
@@ -319,16 +337,22 @@ async function readJsonStream(response, onEvent) {
 }
 
 function App() {
+  const [theme, setTheme] = useState(readInitialTheme);
   const [messages, setMessages] = useState(initialMessages);
   const [conversationId, setConversationId] = useState(null);
   const [conversations, setConversations] = useState([]);
   const [conversationTitle, setConversationTitle] = useState("");
   const [draft, setDraft] = useState("");
-  const [temperature, setTemperature] = useState("0.7");
-  const [repeatPenalty, setRepeatPenalty] = useState("1.1");
+  const [temperature, setTemperature] = useState(() => readStoredValue(TEMPERATURE_STORAGE_KEY, "0.7"));
+  const [repeatPenalty, setRepeatPenalty] = useState(() => readStoredValue(REPEAT_PENALTY_STORAGE_KEY, "1.1"));
   const [isSending, setIsSending] = useState(false);
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
   const [error, setError] = useState("");
+  const [copiedMessageId, setCopiedMessageId] = useState(null);
+  const messageListRef = useRef(null);
+  const messageEndRef = useRef(null);
+  const hasRestoredConversationRef = useRef(false);
+  const shouldStickToBottomRef = useRef(true);
 
   const canSend = useMemo(() => draft.trim().length > 0 && !isSending, [draft, isSending]);
   const activeConversation = conversations.find((conversation) => conversation.id === conversationId);
@@ -336,6 +360,36 @@ function App() {
   useEffect(() => {
     loadConversations();
   }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem(TEMPERATURE_STORAGE_KEY, temperature);
+  }, [temperature]);
+
+  useEffect(() => {
+    localStorage.setItem(REPEAT_PENALTY_STORAGE_KEY, repeatPenalty);
+  }, [repeatPenalty]);
+
+  useEffect(() => {
+    if (conversationId) {
+      localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, String(conversationId));
+    }
+  }, [conversationId]);
+
+  useEffect(() => {
+    if (shouldStickToBottomRef.current) {
+      messageEndRef.current?.scrollIntoView({ block: "end" });
+    }
+  }, [messages]);
+
+  function toggleTheme() {
+    setTheme((currentTheme) => (currentTheme === "dark" ? "light" : "dark"));
+  }
 
   async function loadConversations() {
     setIsLoadingConversations(true);
@@ -347,7 +401,16 @@ function App() {
         throw new Error(data.error || "Unable to load conversations");
       }
 
-      setConversations(data.conversations || []);
+      const nextConversations = data.conversations || [];
+      setConversations(nextConversations);
+
+      if (!hasRestoredConversationRef.current && !conversationId) {
+        hasRestoredConversationRef.current = true;
+        const savedConversationId = Number(localStorage.getItem(ACTIVE_CONVERSATION_STORAGE_KEY));
+        if (savedConversationId && nextConversations.some((conversation) => conversation.id === savedConversationId)) {
+          await openConversation(savedConversationId);
+        }
+      }
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to load conversations");
     } finally {
@@ -374,7 +437,9 @@ function App() {
 
       const conversation = data.conversation;
       setConversationId(conversation.id);
+      localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, String(conversation.id));
       setConversationTitle("");
+      shouldStickToBottomRef.current = true;
       setMessages([]);
       await loadConversations();
     } catch (requestError) {
@@ -394,6 +459,8 @@ function App() {
       }
 
       setConversationId(nextConversationId);
+      localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, String(nextConversationId));
+      shouldStickToBottomRef.current = true;
       setMessages(data.messages || []);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to open conversation");
@@ -401,7 +468,7 @@ function App() {
   }
 
   async function sendMessage(event) {
-    event.preventDefault();
+    event?.preventDefault();
 
     const content = draft.trim();
     if (!content) {
@@ -415,6 +482,7 @@ function App() {
     };
     const assistantMessageId = createClientId();
 
+    shouldStickToBottomRef.current = true;
     setMessages((current) => [
       ...current,
       userMessage,
@@ -514,6 +582,52 @@ function App() {
     }
   }
 
+  async function copyMessageContent(message) {
+    const content = String(message.content || "");
+    if (!content) {
+      return;
+    }
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(content);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = content;
+        textArea.style.position = "fixed";
+        textArea.style.opacity = "0";
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textArea);
+      }
+
+      setCopiedMessageId(message.id);
+      window.setTimeout(() => setCopiedMessageId(null), 1600);
+    } catch (copyError) {
+      setError(copyError instanceof Error ? copyError.message : "Unable to copy message");
+    }
+  }
+
+  function handleMessageKeyDown(event) {
+    if (event.key !== "Enter" || event.shiftKey) {
+      return;
+    }
+
+    if (event.metaKey || event.ctrlKey || !event.altKey) {
+      event.preventDefault();
+      if (canSend) {
+        sendMessage(event);
+      }
+    }
+  }
+
+  function handleMessageListScroll(event) {
+    const element = event.currentTarget;
+    const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+    shouldStickToBottomRef.current = distanceFromBottom < 80;
+  }
+
   return (
     <main className="app-shell">
       <section className="chat-panel" aria-label="Associative chat">
@@ -565,21 +679,50 @@ function App() {
             <h1>Associative Chat</h1>
             <p>{activeConversation?.title || "Bounded memory prototype"}</p>
           </div>
-          <span className="status-pill">Phase 11</span>
+          <div className="header-actions">
+            <button className="theme-toggle" type="button" onClick={toggleTheme}>
+              {theme === "dark" ? "Light" : "Dark"}
+            </button>
+            <span className="status-pill">Phase 11</span>
+          </div>
         </header>
 
-        <div className="message-list" aria-live="polite">
+        <div className="message-list" ref={messageListRef} onScroll={handleMessageListScroll} aria-live="polite">
           {messages.map((message) => (
             <article className={`message message-${message.role}`} key={message.id}>
-              <div className="message-role">{message.role}</div>
+              <div className="message-meta">
+                <div className="message-role">{message.role}</div>
+                {message.role === "assistant" && message.content ? (
+                  <button className="message-copy" type="button" onClick={() => copyMessageContent(message)}>
+                    {copiedMessageId === message.id ? "Copied" : "Copy"}
+                  </button>
+                ) : null}
+              </div>
               <MessageContent message={message} />
-              {message.isStreaming && !message.content ? <p className="streaming-placeholder">Thinking...</p> : null}
+              {message.isStreaming ? (
+                <p className="streaming-placeholder">
+                  <span className="streaming-dots" aria-hidden="true">
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                  {message.content ? "Generating" : "Thinking"}
+                </p>
+              ) : null}
               {message.role === "assistant" ? <MemoryDebugPanel debug={message.memoryDebug} /> : null}
             </article>
           ))}
+          <div ref={messageEndRef} />
         </div>
 
-        {error ? <div className="error-banner">{error}</div> : null}
+        {error ? (
+          <div className="error-banner">
+            <span>{error}</span>
+            <button type="button" onClick={() => setError("")}>
+              Dismiss
+            </button>
+          </div>
+        ) : null}
 
         <form className="composer" onSubmit={sendMessage}>
           <div className="generation-controls" aria-label="Generation settings">
@@ -610,6 +753,7 @@ function App() {
             rows="3"
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={handleMessageKeyDown}
             placeholder="Type a message..."
           />
           <button type="submit" disabled={!canSend}>

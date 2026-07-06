@@ -48,6 +48,19 @@ Deliverable:
 - no duplicated prompt assembly
 - one source of truth
 
+Codex Result:
+```
+• Implemented Phase 1 from roadmap2.md.
+
+  Centralized chat orchestration in backend/chat.py:275, including prompt assembly, retrieval, tool expansion, assistant persistence, response payloads, and stream event production. Both /api/chat and /api/chat/stream now delegate through the
+  same ChatOrchestrator in backend/app.py:59.
+
+  Kept Flask routes focused on HTTP handling and preserved existing backend.app.LocalChatClient imports so current tests and patches still work.
+
+  Verification: python3 -m unittest discover backend passes, 23 tests.
+
+```
+
 ---
 
 ## Phase 2: Streaming + Tool Usage
@@ -74,6 +87,27 @@ Deliverable:
 - tool responses remain persisted correctly
 - no regression of existing retrieval behavior
 
+Codex Result:
+```
+• Implemented Phase 2.
+
+  /api/chat/stream now uses a real tool-aware streaming path in backend/chat.py:150. It streams normal deltas directly, accumulates streamed OpenAI-style tool_calls, executes the existing context tool, then streams the follow-up assistant
+  response through the same orchestration layer before persisting it.
+
+  I also added/updated tests in backend/test_phase10.py:132 for:
+
+  - streaming without tool calls
+  - streaming with a context tool call
+  - final streamed assistant response persistence
+
+  Verification passed:
+
+  python3 -m py_compile backend/app.py backend/chat.py backend/test_phase10.py
+  python3 -m unittest discover backend
+
+  Result: 24 tests passing.
+```
+
 ---
 
 ## Phase 3: Runtime Regression Tests
@@ -95,6 +129,27 @@ Deliverable:
 
 A single regression suite that validates the complete chat runtime.
 
+Codex Result:
+```
+• Implemented Phase 3 by adding a single runtime regression suite: backend/test_runtime_regression.py:10.
+
+  It covers:
+
+  - normal /api/chat
+  - /api/chat/stream
+  - retrieval and recalled prompt context
+  - context tool usage
+  - streaming plus tool usage
+  - conversation/message/embedding persistence
+
+  Verification passed:
+
+  python3 -m unittest backend.test_runtime_regression
+  python3 -m unittest discover backend
+
+  Result: 29 backend tests passing.
+```
+
 ---
 
 ## Phase 4: Dark Mode
@@ -114,6 +169,24 @@ Keep styling simple.
 Deliverable:
 
 Application is comfortable for long conversations.
+
+Codex Result:
+```
+• Implemented Phase 4 dark mode.
+
+  Changes:
+
+  - Added persisted light/dark theme state in frontend/src/main.jsx:2 using localStorage.
+  - Added a header theme toggle.
+  - Converted the UI colors in frontend/src/styles.css:1 to theme variables.
+  - Covered dark styling for chat messages, markdown, code blocks, thinking panels, memory debug panels, forms, errors, and sidebar.
+
+  Verification:
+
+  npm run build
+
+  Build passed.
+```
 
 ---
 
@@ -135,11 +208,36 @@ Possible improvements:
 
 The focus is polish rather than new capability.
 
+Codex Result:
+```
+• Implemented Phase 5 UI polish in frontend/src/main.jsx:1 and frontend/src/styles.css:425.
+
+  Added:
+
+  - Smarter message auto-scroll that respects when the user has scrolled up
+  - Animated streaming indicator
+  - Copy button for assistant messages
+  - Enter-to-send with Shift+Enter for newline
+  - Dismissible error banner
+  - Persisted temperature/repeat-penalty settings
+  - Restores the last active conversation when available
+
+  Verification passed:
+
+  npm run build
+  python3 -m unittest discover backend
+
+  Result: frontend build passed and 29 backend tests passed.
+```
+
 ---
 
 ## Phase 6: Whisper.cpp Voice Input
 
 Integrate local speech recognition.
+
+whisper.cpp can be found at:  /home/zak/engines/whisper.cpp
+
 
 Behavior:
 
