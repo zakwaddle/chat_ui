@@ -21,7 +21,14 @@ try:
     from .chat import LocalChatClient
     from .config import load_config
     from .embeddings import build_embedding_provider
+    from .llama_manager import LlamaManagerConfig
+    from .llama_manager import LlamaManagerError
+    from .llama_manager import LlamaServerManager
     from .tools import get_context_around_message
+    from .voice import WhisperConfig
+    from .voice import WhisperCppTranscriber
+    from .voice import VoiceTranscriptionError
+    from .voice import normalize_audio_suffix
 except ImportError:
     from database import create_conversation
     from database import create_message
@@ -37,7 +44,14 @@ except ImportError:
     from chat import LocalChatClient
     from config import load_config
     from embeddings import build_embedding_provider
+    from llama_manager import LlamaManagerConfig
+    from llama_manager import LlamaManagerError
+    from llama_manager import LlamaServerManager
     from tools import get_context_around_message
+    from voice import WhisperConfig
+    from voice import WhisperCppTranscriber
+    from voice import VoiceTranscriptionError
+    from voice import normalize_audio_suffix
 
 
 def create_app() -> Flask:
@@ -71,6 +85,33 @@ def create_app() -> Flask:
                 repeat_penalty=config.model_repeat_penalty,
             ),
             system_prompt=config.system_prompt,
+        )
+    )
+    voice_transcriber = WhisperCppTranscriber(
+        WhisperConfig(
+            executable_path=config.whisper_executable_path,
+            model_path=config.whisper_model_path,
+            ffmpeg_path=config.whisper_ffmpeg_path,
+            timeout_seconds=config.whisper_timeout_seconds,
+            language=config.whisper_language,
+        )
+    )
+    llama_manager = LlamaServerManager(
+        LlamaManagerConfig(
+            server_path=config.llama_server_path,
+            models_dir=config.llama_models_dir,
+            default_model_path=config.llama_default_model_path,
+            embedding_model_path=config.embedding_model_path,
+            host=config.llama_host,
+            port=config.llama_port,
+            context_size=config.llama_context_size,
+            batch_size=config.llama_batch_size,
+            gpu_layers=config.llama_gpu_layers,
+            threads=config.llama_threads,
+            model_name=config.model_name,
+            temperature=config.model_temperature,
+            repeat_penalty=config.model_repeat_penalty,
+            endpoint_url=config.model_endpoint_url,
         )
     )
 
@@ -133,6 +174,38 @@ def create_app() -> Flask:
 
         return jsonify({"context": context})
 
+    @app.get("/api/tools")
+    def tools_index():
+        return jsonify({"tools": chat_orchestrator.tool_registry.metadata()})
+
+    @app.get("/api/llama/models")
+    def llama_models():
+        return jsonify(llama_manager.list_models())
+
+    @app.get("/api/llama/status")
+    def llama_status():
+        return jsonify(llama_manager.status())
+
+    @app.post("/api/llama/start")
+    def llama_start():
+        payload = request.get_json(silent=True) or {}
+        try:
+            return jsonify(llama_manager.start(payload))
+        except LlamaManagerError as error:
+            return jsonify({"error": str(error), "status": llama_manager.status()}), 400
+
+    @app.post("/api/llama/stop")
+    def llama_stop():
+        return jsonify(llama_manager.stop())
+
+    @app.post("/api/llama/restart")
+    def llama_restart():
+        payload = request.get_json(silent=True) or {}
+        try:
+            return jsonify(llama_manager.restart(payload))
+        except LlamaManagerError as error:
+            return jsonify({"error": str(error), "status": llama_manager.status()}), 400
+
     @app.post("/api/chat")
     def chat():
         payload = request.get_json(silent=True) or {}
@@ -161,6 +234,20 @@ def create_app() -> Flask:
                 yield encode_stream_event("error", {"error": str(error)})
 
         return Response(generate(), mimetype="application/x-ndjson")
+
+    @app.post("/api/voice/transcribe")
+    def voice_transcribe():
+        uploaded_audio = request.files.get("audio")
+        if uploaded_audio is None:
+            return jsonify({"error": "audio file is required"}), 400
+
+        suffix = normalize_audio_suffix(uploaded_audio.filename or "")
+        try:
+            transcript = voice_transcriber.transcribe_upload(uploaded_audio.stream, suffix=suffix)
+        except VoiceTranscriptionError as error:
+            return jsonify({"error": str(error)}), 502
+
+        return jsonify({"transcript": transcript})
 
     return app
 
