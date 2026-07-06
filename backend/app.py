@@ -24,6 +24,7 @@ try:
     from .config import normalize_knowledge_source
     from .config import save_knowledge_sources_file
     from .embeddings import build_embedding_provider
+    from .knowledge_browser import build_knowledge_browser
     from .llama_manager import LlamaManagerConfig
     from .llama_manager import LlamaManagerError
     from .llama_manager import LlamaServerManager
@@ -56,6 +57,7 @@ except ImportError:
     from config import normalize_knowledge_source
     from config import save_knowledge_sources_file
     from embeddings import build_embedding_provider
+    from knowledge_browser import build_knowledge_browser
     from llama_manager import LlamaManagerConfig
     from llama_manager import LlamaManagerError
     from llama_manager import LlamaServerManager
@@ -198,6 +200,16 @@ def create_app() -> Flask:
     @app.get("/api/tools")
     def tools_index():
         return jsonify({"tools": chat_orchestrator.tool_registry.metadata()})
+
+    @app.get("/api/knowledge/browser")
+    def knowledge_browser_index():
+        return jsonify(
+            build_knowledge_browser(
+                database_path=config.database_path,
+                knowledge_sources=current_knowledge_sources,
+                tools=chat_orchestrator.tool_registry.metadata(),
+            )
+        )
 
     @app.get("/api/sqlite/databases")
     def sqlite_databases():

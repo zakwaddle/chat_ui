@@ -247,6 +247,95 @@ function SQLiteExplorerView({
   );
 }
 
+function KnowledgeBrowserView({
+  browser,
+  selectedItem,
+  isLoading,
+  onRefresh,
+  onSelectItem,
+  onOpenItem
+}) {
+  const sections = browser?.sections || [];
+  const activeItem = selectedItem || sections.find((section) => section.items?.length)?.items?.[0] || null;
+
+  return (
+    <section className="knowledge-browser" aria-label="Knowledge browser">
+      <div className="knowledge-browser-header">
+        <div>
+          <h2>Knowledge Browser</h2>
+          <p>{browser ? `${browser.total_items} items across ${sections.length} groups` : "Local knowledge index"}</p>
+        </div>
+        <button type="button" onClick={onRefresh} disabled={isLoading}>
+          {isLoading ? "Loading" : "Refresh"}
+        </button>
+      </div>
+
+      <div className="knowledge-browser-layout">
+        <nav className="knowledge-sections" aria-label="Knowledge sections">
+          {sections.map((section) => (
+            <section className="knowledge-section" key={section.id}>
+              <div className="knowledge-section-heading">
+                <h3>{section.title}</h3>
+                <span>{section.count}</span>
+              </div>
+              <p>{section.description}</p>
+              <div className="knowledge-item-list">
+                {section.items?.length ? (
+                  section.items.map((item) => (
+                    <button
+                      className={`knowledge-item ${activeItem?.id === item.id ? "knowledge-item-active" : ""}`}
+                      type="button"
+                      key={item.id}
+                      onClick={() => onSelectItem(item)}
+                    >
+                      <span>{item.title}</span>
+                      <small>{item.subtitle}</small>
+                    </button>
+                  ))
+                ) : (
+                  <small className="knowledge-empty">No items yet.</small>
+                )}
+              </div>
+            </section>
+          ))}
+        </nav>
+
+        <article className="knowledge-detail">
+          {activeItem ? (
+            <>
+              <div className="knowledge-detail-heading">
+                <div>
+                  <h3>{activeItem.title}</h3>
+                  <p>{activeItem.subtitle}</p>
+                </div>
+                {canOpenKnowledgeItem(activeItem) ? (
+                  <button type="button" onClick={() => onOpenItem(activeItem)}>
+                    Open
+                  </button>
+                ) : null}
+              </div>
+              <dl className="knowledge-detail-meta">
+                {knowledgeItemFacts(activeItem).map((fact) => (
+                  <div key={fact.label}>
+                    <dt>{fact.label}</dt>
+                    <dd>{fact.value}</dd>
+                  </div>
+                ))}
+              </dl>
+              <section className="knowledge-preview">
+                <h4>Preview</h4>
+                <pre>{formatKnowledgePreview(activeItem.preview)}</pre>
+              </section>
+            </>
+          ) : (
+            <p className="knowledge-empty-detail">No knowledge items found.</p>
+          )}
+        </article>
+      </div>
+    </section>
+  );
+}
+
 function splitThinking(content) {
   const text = String(content || "");
   const completeBlock = text.match(/<think[^>]*>([\s\S]*?)<\/think>/i);
@@ -512,6 +601,8 @@ function App() {
   const [sqliteTableDescription, setSqliteTableDescription] = useState(null);
   const [sqlitePreview, setSqlitePreview] = useState(null);
   const [sqlitePreviewLimit, setSqlitePreviewLimit] = useState("25");
+  const [knowledgeBrowser, setKnowledgeBrowser] = useState(null);
+  const [selectedKnowledgeItem, setSelectedKnowledgeItem] = useState(null);
   const [isSending, setIsSending] = useState(false);
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [isTranscribingVoice, setIsTranscribingVoice] = useState(false);
@@ -520,6 +611,7 @@ function App() {
   const [isUpdatingLlama, setIsUpdatingLlama] = useState(false);
   const [isLoadingSqlite, setIsLoadingSqlite] = useState(false);
   const [isRegisteringSqlite, setIsRegisteringSqlite] = useState(false);
+  const [isLoadingKnowledgeBrowser, setIsLoadingKnowledgeBrowser] = useState(false);
   const [error, setError] = useState("");
   const [copiedMessageId, setCopiedMessageId] = useState(null);
   const messageListRef = useRef(null);
@@ -538,6 +630,7 @@ function App() {
     loadConversations();
     loadLlamaRuntime();
     loadSqliteDatabases();
+    loadKnowledgeBrowser();
   }, []);
 
   useEffect(() => {
@@ -688,6 +781,31 @@ function App() {
     }
   }
 
+  async function loadKnowledgeBrowser() {
+    setIsLoadingKnowledgeBrowser(true);
+    try {
+      const response = await fetch("/api/knowledge/browser");
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Unable to load knowledge browser");
+      }
+
+      setKnowledgeBrowser(data);
+      setSelectedKnowledgeItem((currentItem) => {
+        if (!currentItem) {
+          return firstKnowledgeItem(data);
+        }
+        const refreshedItem = findKnowledgeItem(data, currentItem.id);
+        return refreshedItem || firstKnowledgeItem(data);
+      });
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to load knowledge browser");
+    } finally {
+      setIsLoadingKnowledgeBrowser(false);
+    }
+  }
+
   async function openSqliteDatabase(path = sqliteManualPath || sqlitePath) {
     const nextPath = String(path || "").trim();
     if (!nextPath) {
@@ -765,6 +883,7 @@ function App() {
       setSqliteSourceId("");
       setSqliteSourceName("");
       setSqliteSourceDescription("");
+      await loadKnowledgeBrowser();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to register knowledge source");
     } finally {
@@ -852,6 +971,7 @@ function App() {
       shouldStickToBottomRef.current = true;
       setMessages([]);
       await loadConversations();
+      await loadKnowledgeBrowser();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to create conversation");
     }
@@ -874,6 +994,33 @@ function App() {
       setMessages(data.messages || []);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to open conversation");
+    }
+  }
+
+  async function openKnowledgeItem(item) {
+    if (!item) {
+      return;
+    }
+
+    if (item.kind === "conversation" || item.kind === "tool_result") {
+      if (item.conversation_id) {
+        await openConversation(item.conversation_id);
+        setActiveView("chat");
+      }
+      return;
+    }
+
+    if (item.kind === "sqlite_database" || item.kind === "archive_database") {
+      await openSqliteDatabase(item.path);
+      return;
+    }
+
+    if (item.kind === "memory_table") {
+      const chatDatabase = sqliteDatabases.find((database) => database.id === "chat") || sqliteDatabases[0];
+      if (chatDatabase?.path) {
+        await openSqliteDatabase(chatDatabase.path);
+        await selectSqliteTable(item.table_name, chatDatabase.path);
+      }
     }
   }
 
@@ -982,6 +1129,7 @@ function App() {
         setConversationId(latestData.conversation.id);
       }
       await loadConversations();
+      await loadKnowledgeBrowser();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to send message");
       setMessages((current) =>
@@ -1348,8 +1496,8 @@ function App() {
               <button type="button" onClick={() => openSqliteDatabase()} disabled={isLoadingSqlite}>
                 Open
               </button>
-              <button type="button" onClick={() => setActiveView("chat")}>
-                Chat
+              <button type="button" onClick={() => setActiveView("browser")}>
+                Browse
               </button>
             </div>
 
@@ -1430,20 +1578,35 @@ function App() {
         <header className="chat-header">
           <div>
             <h1>Associative Chat</h1>
-            <p>{activeView === "explorer" ? sqliteSchema?.database?.name || "SQLite explorer" : activeConversation?.title || "Bounded memory prototype"}</p>
+            <p>{viewSubtitle(activeView, activeConversation, sqliteSchema)}</p>
           </div>
           <div className="header-actions">
-            <button className="theme-toggle" type="button" onClick={() => setActiveView(activeView === "explorer" ? "chat" : "explorer")}>
-              {activeView === "explorer" ? "Chat" : "Explorer"}
+            <button className="theme-toggle" type="button" onClick={() => setActiveView("chat")}>
+              Chat
+            </button>
+            <button className="theme-toggle" type="button" onClick={() => setActiveView("browser")}>
+              Browser
+            </button>
+            <button className="theme-toggle" type="button" onClick={() => setActiveView("explorer")}>
+              Explorer
             </button>
             <button className="theme-toggle" type="button" onClick={toggleTheme}>
               {theme === "dark" ? "Light" : "Dark"}
             </button>
-            <span className="status-pill">Phase 2</span>
+            <span className="status-pill">Phase 7</span>
           </div>
         </header>
 
-        {activeView === "explorer" ? (
+        {activeView === "browser" ? (
+          <KnowledgeBrowserView
+            browser={knowledgeBrowser}
+            selectedItem={selectedKnowledgeItem}
+            isLoading={isLoadingKnowledgeBrowser}
+            onRefresh={loadKnowledgeBrowser}
+            onSelectItem={setSelectedKnowledgeItem}
+            onOpenItem={openKnowledgeItem}
+          />
+        ) : activeView === "explorer" ? (
           <SQLiteExplorerView
             schema={sqliteSchema}
             selectedTable={sqliteSelectedTable}
@@ -1654,6 +1817,81 @@ function formatCell(value) {
   }
   if (typeof value === "object") {
     return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function viewSubtitle(activeView, activeConversation, sqliteSchema) {
+  if (activeView === "browser") {
+    return "Local knowledge explorer";
+  }
+  if (activeView === "explorer") {
+    return sqliteSchema?.database?.name || "SQLite explorer";
+  }
+  return activeConversation?.title || "Bounded memory prototype";
+}
+
+function firstKnowledgeItem(browser) {
+  return (browser?.sections || []).find((section) => section.items?.length)?.items?.[0] || null;
+}
+
+function findKnowledgeItem(browser, itemId) {
+  for (const section of browser?.sections || []) {
+    const item = section.items?.find((candidate) => candidate.id === itemId);
+    if (item) {
+      return item;
+    }
+  }
+  return null;
+}
+
+function canOpenKnowledgeItem(item) {
+  return ["conversation", "tool_result", "sqlite_database", "archive_database", "memory_table"].includes(item?.kind);
+}
+
+function knowledgeItemFacts(item) {
+  const facts = [
+    { label: "Type", value: item.kind },
+    { label: "Id", value: item.id }
+  ];
+
+  if (item.conversation_id) {
+    facts.push({ label: "Conversation", value: item.conversation_id });
+  }
+  if (item.source_id) {
+    facts.push({ label: "Source", value: item.source_id });
+  }
+  if (item.table_name) {
+    facts.push({ label: "Table", value: item.table_name });
+  }
+  if (item.row_count !== undefined) {
+    facts.push({ label: "Rows", value: formatRowCount(item.row_count) });
+  }
+  if (item.path) {
+    facts.push({ label: "Path", value: item.path });
+  }
+  if (item.size_bytes !== undefined) {
+    facts.push({ label: "Size", value: formatBytes(item.size_bytes) });
+  }
+  if (item.permission) {
+    facts.push({ label: "Permission", value: item.permission });
+  }
+  if (item.created_at) {
+    facts.push({ label: "Created", value: item.created_at });
+  }
+  if (item.updated_at) {
+    facts.push({ label: "Updated", value: item.updated_at });
+  }
+
+  return facts.filter((fact) => fact.value !== undefined && fact.value !== null && fact.value !== "");
+}
+
+function formatKnowledgePreview(value) {
+  if (value === null || value === undefined || value === "") {
+    return "No preview available.";
+  }
+  if (typeof value === "object") {
+    return JSON.stringify(value, null, 2);
   }
   return String(value);
 }

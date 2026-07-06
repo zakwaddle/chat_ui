@@ -691,6 +691,201 @@ summary {
   white-space: pre-wrap;
 }
 
+.knowledge-browser {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 16px;
+  overflow: hidden;
+  padding: 24px;
+}
+
+.knowledge-browser-header,
+.knowledge-detail-heading,
+.knowledge-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.knowledge-browser-header h2,
+.knowledge-browser-header p,
+.knowledge-section-heading h3,
+.knowledge-section p,
+.knowledge-detail-heading h3,
+.knowledge-detail-heading p,
+.knowledge-preview h4 {
+  margin: 0;
+}
+
+.knowledge-browser-header h2 {
+  font-size: 1.1rem;
+}
+
+.knowledge-browser-header p,
+.knowledge-section p,
+.knowledge-detail-heading p {
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+}
+
+.knowledge-browser-header button,
+.knowledge-detail-heading button {
+  flex: 0 0 auto;
+  min-height: 34px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: var(--button-bg);
+  color: var(--button-text);
+  font-size: 0.82rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.knowledge-browser-layout {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.knowledge-sections {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  padding-right: 12px;
+}
+
+.knowledge-section {
+  display: grid;
+  gap: 8px;
+}
+
+.knowledge-section-heading h3 {
+  font-size: 0.9rem;
+}
+
+.knowledge-section-heading span {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 7px;
+  background: var(--surface-bg);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.knowledge-item-list {
+  display: grid;
+  gap: 6px;
+}
+
+.knowledge-item {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.knowledge-item:hover,
+.knowledge-item-active {
+  border-color: var(--accent-border);
+  background: var(--surface-bg);
+}
+
+.knowledge-item span,
+.knowledge-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-item span {
+  font-weight: 800;
+}
+
+.knowledge-item small,
+.knowledge-empty {
+  color: var(--text-muted);
+}
+
+.knowledge-detail {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.knowledge-detail-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.knowledge-detail-meta div {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--surface-bg);
+}
+
+.knowledge-detail-meta dt {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.knowledge-detail-meta dd {
+  overflow: hidden;
+  margin: 3px 0 0;
+  color: var(--text-primary);
+  font-size: 0.84rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-preview {
+  display: grid;
+  gap: 10px;
+}
+
+.knowledge-preview pre {
+  max-height: 360px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-bg);
+  color: var(--code-text);
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.knowledge-empty-detail {
+  margin: 0;
+  color: var(--text-muted);
+}
+
 .status-pill {
   flex: 0 0 auto;
   border: 1px solid var(--success-border);
@@ -1152,20 +1347,25 @@ summary {
 
   .chat-header,
   .message-list,
-  .sqlite-explorer {
+  .sqlite-explorer,
+  .knowledge-browser {
     padding-inline: 16px;
   }
 
   .sqlite-explorer-header,
-  .sqlite-table-heading {
+  .sqlite-table-heading,
+  .knowledge-browser-header,
+  .knowledge-detail-heading {
     flex-direction: column;
   }
 
-  .sqlite-explorer-layout {
+  .sqlite-explorer-layout,
+  .knowledge-browser-layout {
     grid-template-columns: 1fr;
   }
 
-  .sqlite-explorer-tables {
+  .sqlite-explorer-tables,
+  .knowledge-sections {
     max-height: 220px;
     border-right: 0;
     border-bottom: 1px solid var(--border);

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from .models import FUTURE_MEMORY_LAYERS
+try:
+    from .models import FUTURE_MEMORY_LAYERS
+except ImportError:
+    from models import FUTURE_MEMORY_LAYERS
 
 
 def list_future_memory_layers() -> list[dict[str, str]]:
